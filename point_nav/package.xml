@@ -3,7 +3,7 @@
   <name>point_nav</name>
   <version>0.1.0</version>
   <description>Point-to-point navigation via Joy commands using visual odometry.</description>
-  <maintainer email="you@example.com">Your Name</maintainer>
+  <maintainer email="akshart.amatya@outlook.com">CartCart</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
