@@ -5,8 +5,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
-from nav_msgs.msg import Odometry
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, PoseStamped
 from sensor_msgs.msg import Joy
 
 
@@ -30,31 +29,31 @@ class PointNavNode(Node):
 
         # Parameters
         self.declare_parameter('goal_tolerance', 0.2)  # meters
-        self.declare_parameter('max_linear_speed', 0.6)  # normalized to joy [-1..1] -> map to triggers
-        self.declare_parameter('max_angular_speed', 1.0)  # rad/s mapped to steering [-1..1]
-        self.declare_parameter('k_v', 0.6)
-        self.declare_parameter('k_w', 1.5)
-        self.declare_parameter('angle_slowdown_threshold', 0.6)  # rad; reduce v when > threshold
+        self.declare_parameter('max_linear_speed', 1.0)  # normalized to joy [-1..1] -> map to triggers
+        self.declare_parameter('max_angular_speed', 0.5)  # rad/s mapped to steering [-1..1]
+        self.declare_parameter('k_v', 1.2)
+        self.declare_parameter('k_w', 0.75)
+        self.declare_parameter('angle_slowdown_threshold', 0.3)  # rad; reduce v when > threshold
 
         # Internal state
         self._x = 0.0
         self._y = 0.0
         self._yaw = 0.0
-        self._has_odom = False
+        self._has_odom = False  # kept name for backward clarity
 
         self._goal: Optional[Point] = None
         self._active = False
         self._last_stop_sent = False
 
-        # QoS suitable for ZED odom (usually reliable)
+        # QoS suitable for ZED pose (usually reliable)
         qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             history=HistoryPolicy.KEEP_LAST,
             depth=10,
         )
 
-        self._odom_sub = self.create_subscription(
-            Odometry, '/zed/zed_node/odom', self._odom_cb, qos
+        self._pose_sub = self.create_subscription(
+            PoseStamped, '/zed/zed_node/pose', self._pose_cb, qos
         )
         self._goal_sub = self.create_subscription(
             Point, '/goal_point', self._goal_cb, qos
@@ -66,10 +65,10 @@ class PointNavNode(Node):
         self.get_logger().info('PointNavNode ready. Publish geometry_msgs/Point to /goal_point')
 
     # Callbacks
-    def _odom_cb(self, msg: Odometry) -> None:
-        self._x = msg.pose.pose.position.x
-        self._y = msg.pose.pose.position.y
-        q = msg.pose.pose.orientation
+    def _pose_cb(self, msg: PoseStamped) -> None:
+        self._x = msg.pose.position.x
+        self._y = msg.pose.position.y
+        q = msg.pose.orientation
         self._yaw = yaw_from_quaternion(q.x, q.y, q.z, q.w)
         self._has_odom = True
 
@@ -131,6 +130,15 @@ class PointNavNode(Node):
         v_cmd = max(0.0, min(max_v, v_cmd))
         w_cmd = max(-max_w, min(max_w, k_w * heading_error))
 
+        # Continuous status printout about heading and turn command
+        heading_off_deg = abs(math.degrees(heading_error))
+        turn_dir = 'left' if w_cmd > 0.0 else ('right' if w_cmd < 0.0 else 'none')
+        turn_mag_deg = abs(math.degrees(w_cmd))
+        self.get_logger().info(
+            f"i am {heading_off_deg:.1f} deg heading off and {dist:.2f} m away; "
+            f"i will now turn {turn_dir} {turn_mag_deg:.1f} deg/s to fix this"
+        )
+
         # Map to Joy
         joy_msg = self._joy_from_cmd(v_cmd, w_cmd, max_v, max_w)
         self._joy_pub.publish(joy_msg)
@@ -182,4 +190,3 @@ def main(args=None):
     finally:
         node.destroy_node()
         rclpy.shutdown()
-

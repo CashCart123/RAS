@@ -3,7 +3,7 @@
 Point-to-point navigation for a rover using visual odometry, publishing joystick-like commands to `/joy`.
 
 - ROS 2: Humble (Ubuntu 22.04)
-- Input odometry: `/zed/zed_node/odom` (`nav_msgs/Odometry`)
+- Input pose: `/zed/zed_node/pose` (`geometry_msgs/PoseStamped`)
 - Output command: `/joy` (`sensor_msgs/Joy`)
 - Goal input: `/goal_point` (`geometry_msgs/Point`) in rover/camera frame (X forward, Y left, Z up)
 
@@ -57,7 +57,7 @@ Override via the launch file or `ros2 param set` while running.
 
 ## Assumptions
 
-- ZED odometry axes are aligned with rover: X forward, Y left, Z up.
+- ZED pose frame axes are aligned with rover: X forward, Y left, Z up.
 - The vehicle consuming `/joy` interprets the provided axes as described above.
 - If your setup differs (e.g., different axes indices or neutral values), adjust the mapping in `point_nav/point_nav/point_nav_node.py`.
 

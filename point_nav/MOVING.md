@@ -54,9 +54,9 @@ ros2 launch point_nav point_nav.launch.py
 ## Verify & Troubleshoot
 - Package visible: `ros2 pkg list | grep point_nav`
 - Node running: `ros2 node list` (look for `/point_nav`)
-- Topics: `ros2 topic list | grep -E "goal_point|joy|odom"`
-- Different odom topic? Remap at launch:
+- Topics: `ros2 topic list | grep -E "goal_point|joy|pose"`
+- Different pose topic? Remap at launch:
   ```bash
-  ros2 launch point_nav point_nav.launch.py --ros-args -r /zed/zed_node/odom:=/your/odom/topic
+  ros2 launch point_nav point_nav.launch.py --ros-args -r /zed/zed_node/pose:=/your/pose/topic
   ```
 - Another `/joy` publisher active (e.g., joystick driver)? Stop it to avoid conflicts.
