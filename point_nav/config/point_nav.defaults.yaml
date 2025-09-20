@@ -1,0 +1,45 @@
+# Point-Nav default parameters (ROS 2 YAML)
+# Loaded by point_nav.launch.py (can override with params_file:=...)
+# Notes:
+# - Values below are a conservative, slow profile for safe testing.
+# - You can tweak these at runtime with `ros2 param set /point_nav <name> <value>`.
+
+point_nav:
+  ros__parameters:
+    # Stop within this distance of the goal (meters).
+    goal_tolerance: 0.2
+
+    # Hard cap on forward command (maps to Joy axes[5], 1.0→-1.0).
+    # Lower to reduce top speed.
+    max_linear_speed: 0.4
+
+    # Scale output of the forward trigger so it never reaches full press.
+    # 1.0 = allow full press; 0.5 = cap at half-press (recommended safe default).
+    forward_axis_scale: 0.5
+    # Scale output of the reverse trigger so it never reaches full press when reversing.
+    backward_axis_scale: 0.5
+    # Limit steering output (axes[0]) to avoid full-lock turns. 1.0 = no cap, 0.7 = 70% lock.
+    steer_axis_scale: 0.7
+    # Period (seconds) for throttled debug status logs (e.g., 1.0 for 1 Hz).
+    status_log_period: 1.0
+
+    # Allow reversing when the goal is largely behind the rover
+    allow_reverse: true
+    # Allow reversing when the goal is largely behind the rover
+    allow_reverse: true
+
+    # Cap on steering magnitude (maps to Joy axes[0], -1.0..1.0).
+    # Lower for gentler turns.
+    max_angular_speed: 0.5
+
+    # Linear gain; scales speed with distance.
+    # Lower for gentler acceleration toward the cap.
+    k_v: 0.5
+
+    # Angular gain; how strongly to turn to correct heading.
+    # Lower for slower/softer heading corrections.
+    k_w: 0.8
+
+    # Radians of heading error above which linear speed is reduced.
+    # Smaller means slow down sooner when misaligned.
+    angle_slowdown_threshold: 0.3

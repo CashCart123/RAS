@@ -2,20 +2,19 @@
 <package format="3">
   <name>point_nav</name>
   <version>0.1.0</version>
-  <description>Point-to-point navigation via Joy commands using visual odometry.</description>
+  <description>Point-to-point navigation via Joy commands using visual odometry/pose.</description>
   <maintainer email="akshart.amatya@outlook.com">CartCart</maintainer>
   <license>MIT</license>
 
-  <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_python</buildtool_depend>
 
-  <depend>rclpy</depend>
-  <depend>sensor_msgs</depend>
-  <depend>nav_msgs</depend>
-  <depend>geometry_msgs</depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>
   </export>
 </package>
-

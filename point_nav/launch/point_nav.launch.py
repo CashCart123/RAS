@@ -1,22 +1,26 @@
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    default_params_file = PathJoinSubstitution([
+        FindPackageShare('point_nav'), 'config', 'point_nav.defaults.yaml'
+    ])
+
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'params_file',
+            default_value=default_params_file,
+            description='Path to the YAML file with point_nav parameters.'
+        ),
         Node(
             package='point_nav',
             executable='point_nav_node',
             name='point_nav',
             output='screen',
-            parameters=[{
-                'goal_tolerance': 0.2,
-                'max_linear_speed': 0.6,
-                'max_angular_speed': 1.0,
-                'k_v': 0.6,
-                'k_w': 1.5,
-                'angle_slowdown_threshold': 0.6
-            }]
+            parameters=[LaunchConfiguration('params_file')],
         )
     ])
-
