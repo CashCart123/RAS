@@ -42,7 +42,7 @@ class PointNavNode(Node):
         self.declare_parameter('backward_axis_scale', 0.5)
         # Limit steering output on axes[0] to avoid full-lock turns. 1.0 = no cap, 0.5 = half lock.
         self.declare_parameter('steer_axis_scale', 0.7)
-        # Throttled debug status period (seconds). Set to 1.0 for 1 Hz.
+        # Throttle status update period (seconds). Set to 1.0 for 1 Hz.
         self.declare_parameter('status_log_period', 1.0)
         # Allow reversing when goal is largely behind rover
         self.declare_parameter('allow_reverse', True)
@@ -58,7 +58,7 @@ class PointNavNode(Node):
         self._goal: Optional[Point] = None
         self._active = False
         self._last_stop_sent = False
-        self._last_status_log_ns = 0  # throttle debug logs
+        self._last_status_log_ns = 0  # throttle logs
 
         # QoS suitable for ZED pose (usually reliable)
         qos = QoSProfile(
