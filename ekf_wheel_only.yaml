@@ -1,0 +1,28 @@
+ekf_filter_node:
+  ros__parameters:
+    frequency: 30.0
+    two_d_mode: true
+    publish_tf: true
+    print_diagnostics: true
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_footprint
+    world_frame: odom
+
+    # Use your wheel odometry topic
+    odom0: /wheel/odom
+
+    # Fuse only X position and X velocity from wheel odom
+    # State order:
+    # [x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az]
+    odom0_config: [
+      true,  false, false,
+      false, false, false,
+      true,  false, false,
+      false, false, false,
+      false, false, false
+    ]
+
+    odom0_differential: false
+    odom0_relative: false

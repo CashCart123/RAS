@@ -1,0 +1,28 @@
+In all Terminals:
+cd Simple_Autonomous
+
+New Terminal: Listens to the encoder tics coming from the wheels (teensy will publish) and updates wheel position in RVIZ
+python3 joint_state_publishing.py
+
+New Terminal: Launches RVIZ. Make sure the following options are selected in RVIZ:
+Select fixed frame as odom
+Under RobotModel choose /robot_description as the topic
+Add TF down on the bottom right of the screen
+
+ros2 launch view_robot.launch.py
+
+New Terminal: Listens to the encoder tics coming from the wheels (teensy will publish) and calculates how far forward or backwards the rover has travelled. 
+
+python3 wheel_odometry_node.py
+
+New Terminal: EKF Node. As odometry from the wheels is on trusted for forwards and backwards, the EKF only uses this data. Additionally, see commented out code for how include ZED Cam. 
+
+ros2 run robot_localization ekf_node --ros-args --params-file ekf_wheel_only.yaml
+
+New Terminal: Fake wheel ticker
+i=0
+while true; do
+  i=$((i+20))
+  ros2 topic pub --once /wheel_ticks std_msgs/msg/Int32MultiArray "{data: [-$i, $i, -$i, $i]}"
+  sleep 0.1
+done
