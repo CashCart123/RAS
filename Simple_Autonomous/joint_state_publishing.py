@@ -10,7 +10,7 @@ class WheelJointStatePublisher(Node):
         super().__init__('wheel_joint_state_publisher')
 
         # ---- CONFIG ----
-        self.ticks_per_rev = 2048  # CHANGE THIS
+        self.ticks_per_rev = 589824*4  # CHANGE THIS
         self.joint_names = [
             'front_left_wheel_joint',
             'front_right_wheel_joint',

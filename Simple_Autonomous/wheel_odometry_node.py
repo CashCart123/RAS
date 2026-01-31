@@ -14,7 +14,7 @@ class WheelOdomNode(Node):
         super().__init__('wheel_odom')
 
         # ---- CONFIG ----
-        self.wheel_radius = 0.1575  # meters (from your URDF)
+        self.wheel_radius = 0.31/2  # meters (from your URDF)
         self.joint_names = [
             'front_left_wheel_joint',
             'front_right_wheel_joint',
