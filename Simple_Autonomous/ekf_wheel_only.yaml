@@ -10,19 +10,32 @@ ekf_filter_node:
     base_link_frame: base_footprint
     world_frame: odom
 
-    # Use your wheel odometry topic
-    odom0: /wheel/odom
+    # # Wheel odometry
+    # odom0: /wheel/odom
 
-    # Fuse only X position and X velocity from wheel odom
-    # State order:
-    # [x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az]
+    # # Fuse X position + X velocity from wheel odom
+    # # [x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az]
+    # odom0_config: [
+    #   true,  false, false,
+    #   false, false, false,
+    #   true,  false, false,
+    #   false, false, false,
+    #   false, false, false
+    # ]
+    # odom0_differential: false
+    # odom0_relative: false
+
+    # ZED odometry
+    odom0: /zed_front/zed_node/odom 
+
+    # Fuse X, Y, and Yaw from ZED (2D pose)
+    # (Leave velocities false to avoid double-fusing if wheel odom is your velocity source)
     odom0_config: [
-      true,  false, false,
-      false, false, false,
-      true,  false, false,
-      false, false, false,
+      true,  true,  false,
+      false, false, true,
+      false, true, false,
+      false, false, true,
       false, false, false
     ]
-
     odom0_differential: false
     odom0_relative: false

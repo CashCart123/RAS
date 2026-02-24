@@ -57,19 +57,38 @@ class WheelOdomNode(Node):
         if dt <= 0.0:
             return
 
-        # Δθ for each wheel (radians)
-        dtheta = [
-            p - pp for p, pp in zip(positions, self.prev_positions)
-        ]
 
         # Average wheel angular velocity (rad/s)
-        avg_omega = sum(dtheta) / len(dtheta) / dt
+        # Δθ for each wheel (radians)
+        dtheta = [p - pp for p, pp in zip(positions, self.prev_positions)]
+        d_fl, d_fr, d_bl, d_br = dtheta
 
-        # Linear forward velocity (m/s)
-        v = avg_omega * self.wheel_radius
+        # Average left/right wheel motion
+        left = (d_fl + d_bl) / 2.0
+        right = (d_fr + d_br) / 2.0
 
-        # Integrate x only
-        self.x += v * dt
+        # Wheel linear velocities
+        v_left = (left / dt) * self.wheel_radius
+        v_right = (right / dt) * self.wheel_radius
+
+        # Robot forward velocity estimate (skid-steer / diff-drive model)
+        v = (v_left + v_right) / 2.0
+
+        # ---- Spin-in-place gating ----
+        spin_score = abs(v_left + v_right)   # ~0 if pure spin
+        turn_score = abs(v_left - v_right)   # large if spin
+
+        SPIN_SUM_THRESH = 0.05    # m/s   tune this
+        SPIN_DIFF_THRESH = 0.10   # m/s   tune this
+
+        is_spin = (spin_score < SPIN_SUM_THRESH) and (turn_score > SPIN_DIFF_THRESH)
+
+        if is_spin:
+            v = 0.0
+            # Do NOT integrate forward x during spin-in-place
+        else:
+            self.x += v * dt
+
 
         # ---- Publish odometry ----
         odom = Odometry()
@@ -99,6 +118,18 @@ class WheelOdomNode(Node):
             0.0,  0.0,   0.0,   0.0,   999.0, 0.0,
             0.0,  0.0,   0.0,   0.0,   0.0,   999.0,
         ]
+
+                # Pose covariance: make wheel pose basically ignored
+        HUGE = 0.09
+        odom.pose.covariance = [
+            HUGE, 0.0,  0.0,  0.0,  0.0,  0.0,
+            0.0,  HUGE, 0.0,  0.0,  0.0,  0.0,
+            0.0,  0.0,  HUGE, 0.0,  0.0,  0.0,
+            0.0,  0.0,  0.0,  HUGE, 0.0,  0.0,
+            0.0,  0.0,  0.0,  0.0,  HUGE, 0.0,
+            0.0,  0.0,  0.0,  0.0,  0.0,  HUGE,
+        ]
+
 
         self.pub.publish(odom)
 

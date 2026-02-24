@@ -70,8 +70,9 @@
         <parent link="base_link"/>
         <child link="zed_front_camera_link"/>
         <!-- TODO: set to your actual mount position -->
-        <origin xyz="0.30 0.00 0.40" rpy="0 0 0"/>
+        <origin xyz="0.450 0.00 0.680" rpy="0 0 0"/>
     </joint>
+
 
     <!-- Front Left Wheel Link -->
     <joint name="front_left_wheel_joint" type="continuous">
