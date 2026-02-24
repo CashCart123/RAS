@@ -1,0 +1,12 @@
+waypoint_nav_node:
+  ros__parameters:
+    waypoints: [0.0, 0.0,  4.0, 0.0, 7.0, 3.0, 7.0, 8.0]
+    goal_tolerance: 0.25
+    heading_tolerance: 0.15
+    reorient_threshold: 0.35
+    max_linear_speed: 0.3
+    max_angular_speed: 1.0
+    k_v: 0.6
+    k_w: 1.2
+    forward_axis_scale: 0.6
+    steer_axis_scale: 0.7
