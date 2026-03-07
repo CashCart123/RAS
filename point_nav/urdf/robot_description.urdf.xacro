@@ -1,0 +1,216 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="robot">
+
+    <xacro:include filename="inertial_macros.xacro" />
+
+    <!-- ZED include (needed for xacro:zed_camera) -->
+    <xacro:include filename="$(find zed_wrapper)/urdf/zed_macro.urdf.xacro" />
+
+    <material name="white">
+        <color rgba="1 1 1 1" />
+    </material>
+
+    <material name="orange">
+        <color rgba="1 0.3 0.1 1" />
+    </material>
+
+    <material name="blue">
+        <color rgba="0.2 0.2 1 1" />
+    </material>
+
+    <material name="black">
+        <color rgba="0 0 0 1" />
+    </material>
+
+    <material name="red">
+        <color rgba="1 0 0 1"/>
+    </material>
+
+    <joint name="base_footprint_joint" type="fixed">
+        <parent link="base_footprint"/>
+        <child link="base_link"/>
+        <origin xyz="0 0 0.35571" rpy="0 0 0"/>
+    </joint>
+
+    <link name="base_footprint">
+    </link>
+
+    <link name="base_link">
+        <visual>
+            <origin xyz ="0 0 0"/>
+            <geometry>
+                <box size="0.77 0.62 0.25" />
+            </geometry>
+            <material name="blue"/>
+        </visual>
+        <collision>
+            <origin xyz ="0 0 0"/>
+            <geometry>
+                <box size="0.77 0.62 0.25" />
+            </geometry>
+        </collision>
+        <xacro:inertial_box mass="20" x="0.77" y="0.62" z="0.25">
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+        </xacro:inertial_box>
+    </link>
+
+    <!-- FIX: was 'chassis' (no such link). Minimal change to a valid link. -->
+    <gazebo reference="base_link">
+        <material>Gazebo/Blue</material>
+    </gazebo>
+
+    <!-- ZED 2i camera instance (minimal) -->
+    <xacro:zed_camera name="zed_front" model="zed2i">
+        <!-- Required block to avoid "Not enough blocks" -->
+        <gnss_origin />
+    </xacro:zed_camera>
+
+    <!-- Mount the ZED to the rover -->
+    <joint name="zed_front_mount_joint" type="fixed">
+        <parent link="base_link"/>
+        <child link="zed_front_camera_link"/>
+        <!-- TODO: set to your actual mount position -->
+        <origin xyz="0.450 0.00 0.680" rpy="0 0 0"/>
+    </joint>
+
+    <!-- ------------------------------------------------------------------ -->
+    <!-- PLACEHOLDERS FOR FUTURE CAMERAS (disabled/commented by default)    -->
+    <!-- Keep commented until hardware and launch topics are ready.          -->
+    <!--
+    <xacro:zed_camera name="zed_left" model="zed2i">
+        <gnss_origin />
+    </xacro:zed_camera>
+    <joint name="zed_left_mount_joint" type="fixed">
+        <parent link="base_link"/>
+        <child link="zed_left_camera_link"/>
+        <origin xyz="0.10 0.30 0.68" rpy="0 0 1.5708"/>
+    </joint>
+
+    <xacro:zed_camera name="zed_right" model="zed2i">
+        <gnss_origin />
+    </xacro:zed_camera>
+    <joint name="zed_right_mount_joint" type="fixed">
+        <parent link="base_link"/>
+        <child link="zed_right_camera_link"/>
+        <origin xyz="0.10 -0.30 0.68" rpy="0 0 -1.5708"/>
+    </joint>
+    -->
+
+
+    <!-- Front Left Wheel Link -->
+    <joint name="front_left_wheel_joint" type="continuous">
+        <parent link="base_link" />
+        <child link="front_left_wheel" />
+        <origin xyz ="0.42 0.47 -0.19821" rpy="-${pi/2} 0 0" />
+        <axis xyz="0 0 1" />
+    </joint>
+
+    <link name="front_left_wheel">
+        <visual>
+            <geometry>
+                <cylinder radius="0.1575" length="0.09" />
+            </geometry>
+            <material name="blue"/>
+        </visual>
+        <collision>
+            <geometry>
+                <cylinder radius="0.1575" length="0.09" />
+            </geometry>
+        </collision>
+        <xacro:inertial_cylinder mass="1.2" length="0.09" radius="0.1575">
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+        </xacro:inertial_cylinder>
+    </link>
+
+    <gazebo reference="front_left_wheel">
+        <material>Gazebo/Blue</material>
+    </gazebo>
+
+    <!-- Front Right Wheel Link -->
+    <joint name="front_right_wheel_joint" type="continuous">
+        <parent link="base_link" />
+        <child link="front_right_wheel" />
+        <origin xyz ="0.42 -0.47 -0.19821" rpy="${pi/2} 0 0" />
+        <axis xyz="0 0 -1" />
+    </joint>
+
+    <link name="front_right_wheel">
+        <visual>
+            <geometry>
+                <cylinder radius="0.1575" length="0.09" />
+            </geometry>
+            <material name="blue"/>
+        </visual>
+        <collision>
+            <geometry>
+                <cylinder radius="0.1575" length="0.09" />
+            </geometry>
+        </collision>
+        <xacro:inertial_cylinder mass="1.2" length="0.09" radius="0.1575">
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+        </xacro:inertial_cylinder>
+    </link>
+
+    <gazebo reference="front_right_wheel">
+        <material>Gazebo/Blue</material>
+    </gazebo>
+
+    <!-- Back Left Wheel Link -->
+    <joint name="back_left_wheel_joint" type="continuous">
+        <parent link="base_link" />
+        <child link="back_left_wheel" />
+        <origin xyz ="-0.42 0.47 -0.19821" rpy="-${pi/2} 0 0" />
+        <axis xyz="0 0 1" />
+    </joint>
+
+    <link name="back_left_wheel">
+        <visual>
+            <geometry>
+                <cylinder radius="0.1575" length="0.09" />
+            </geometry>
+            <material name="blue"/>
+        </visual>
+        <collision>
+            <geometry>
+                <cylinder radius="0.1575" length="0.09" />
+            </geometry>
+        </collision>
+        <xacro:inertial_cylinder mass="1.2" length="0.09" radius="0.1575">
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+        </xacro:inertial_cylinder>
+    </link>
+
+    <gazebo reference="back_left_wheel">
+        <material>Gazebo/Blue</material>
+    </gazebo>
+
+    <!-- Back Right Wheel Link -->
+    <joint name="back_right_wheel_joint" type="continuous">
+        <parent link="base_link" />
+        <child link="back_right_wheel" />
+        <origin xyz ="-0.42 -0.47 -0.19821" rpy="${pi/2} 0 0" />
+        <axis xyz="0 0 -1" />
+    </joint>
+
+    <link name="back_right_wheel">
+        <visual>
+            <geometry>
+                <cylinder radius="0.1575" length="0.09" />
+            </geometry>
+            <material name="blue"/>
+        </visual>
+        <collision>
+            <geometry>
+                <cylinder radius="0.1575" length="0.09" />
+            </geometry>
+        </collision>
+        <xacro:inertial_cylinder mass="1.2" length="0.09" radius="0.1575">
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+        </xacro:inertial_cylinder>
+    </link>
+
+    <gazebo reference="back_right_wheel">
+        <material>Gazebo/Blue</material>
+    </gazebo>
+
+</robot>

@@ -1,145 +1,75 @@
 # point_nav
 
-Point-to-point navigation for a rover using visual odometry, publishing joystick-like commands to `/joy`.
+Point-to-point rover navigation that publishes joystick-style commands on `/joy`.
 
-- ROS 2: Humble (Ubuntu 22.04)
-- Input pose: `/zed/zed_node/pose` (`geometry_msgs/PoseStamped`)
+## What It Does Now
+- Follows goals using a P controller (`/goal_point` override + `/goal_point/add` queue).
+- Uses fused odometry by default from `robot_localization` EKF (`/odometry/filtered`).
+- Runs wheel odometry (`/joint_states -> /wheel/odom`) and fuses with camera odometry.
+- Supports e-stop (`/point_nav/estop`) to immediately stop and clear queue.
+- Supports file-based goals from YAML (`goal_inputs`).
+- Supports per-goal throttle (`Point.z`) and global throttle scaling.
+
+## Main Topics
+- Goal override: `/goal_point` (`geometry_msgs/Point`)
+- Goal queue add: `/goal_point/add` (`geometry_msgs/Point`)
+- E-stop: `/point_nav/estop` (`std_msgs/Bool`)
 - Output command: `/joy` (`sensor_msgs/Joy`)
-- Goal input: `/goal_point` (`geometry_msgs/Point`) in rover/camera frame (X forward, Y left)
+- EKF output odom: `/odometry/filtered` (`nav_msgs/Odometry`)
+- Wheel odom: `/wheel/odom` (`nav_msgs/Odometry`)
 
-## Control behavior
-
-- Closed-loop P controller:
-  - Linear: `v = k_v * distance`, limited by `max_linear_speed`.
-  - Angular: `w = k_w * heading_error`, limited by `max_angular_speed`.
-  - Reduces linear speed when heading error is large.
-- Stops when within `goal_tolerance` meters of the goal and publishes neutral Joy.
-
-## Joy mapping
-
-- `axes[5]` (forward trigger): neutral 1.0, full forward -1.0
-- `axes[2]` (back trigger): neutral 1.0, full reverse -1.0
-- `axes[0]` (steering): left +1.0, right -1.0
-
-## Build and run
-
-Assuming a ROS 2 workspace at `~/ros2_ws` (or use your own):
-
-```
-# Create overlay workspace if needed
-mkdir -p ~/ros2_ws/src
-cd ~/ros2_ws/src
-# Copy or symlink this package into src, or clone your repo here
-# e.g., if this repo is at /home/cashcart/Documents/RAS
-ln -s /home/cashcart/Documents/RAS/point_nav .
-
-cd ..
-colcon build --packages-select point_nav
-. install/setup.bash
-
-# Run the node
+## Launch
+```bash
 ros2 launch point_nav point_nav.launch.py
-
-# Send a goal in rover frame (meters)
-# CLI helper
-ros2 run point_nav set_goal 2.0 1.0
-
-## CLI helper usage
-
-Synopsis:
-`ros2 run point_nav set_goal <x> <y> [--count N] [--delay S] [--topic NAME]`
-
-- x: forward distance (meters) in the rover frame. Positive is forward; negative is backward.
-- y: lateral distance (meters) in the rover frame. Positive is left; negative is right.
-- --count N: publish the same goal N times (default 3). The command repeats the goal message N times, spaced by `--delay`, to improve delivery if you send a goal before the node subscribes (startup race) or if QoS timing drops a single message.
-- --delay S: seconds between repeated publishes (default 0.1). Typical range 0.05–0.2.
-- --topic NAME: goal topic (default `/goal_point`). Include namespace if used (e.g., `/ns/goal_point`).
-
-Examples:
-- `ros2 run point_nav set_goal 1.5 0.0`         # straight 1.5 m ahead
-- `ros2 run point_nav set_goal 2.0 -0.5`        # 2.0 m ahead, 0.5 m to the right
-- `ros2 run point_nav set_goal 0.0 1.0 --count 5 --delay 0.2`  # send multiple times
-
-## Parameters (launch defaults via YAML)
-
-- `goal_tolerance` (float, m): default 0.2
-- `max_linear_speed` (float, normalized): default 0.4
-- `max_angular_speed` (float, rad/s normalized): default 0.5
-- `k_v` (float): default 0.5
-- `k_w` (float): default 0.8
-- `angle_slowdown_threshold` (float, rad): default 0.3
-
-- `forward_axis_scale` (0.0..1.0): scales forward trigger output; 0.5 caps to half‑press (keeps top speed at ~50%).
-- `backward_axis_scale` (0.0..1.0): scales reverse trigger output; e.g., 0.5 caps reverse to half‑press.
-- `steer_axis_scale` (0.0..1.0): scales steering output; e.g., 0.7 limits to 70% lock.
-- `status_log_period` (seconds): throttle period for the status line (default 1.0).
-- `allow_reverse` (bool): when true, the rover will back up if the goal is largely behind it (> ~90° off current heading).
-
-These defaults live in `config/point_nav.defaults.yaml` and are loaded by the launch file. Override via another YAML:
-
-`ros2 launch point_nav point_nav.launch.py params_file:=/path/to/custom.yaml`
-
-Or tweak live with params:
-
-`ros2 param set /point_nav max_linear_speed 0.35`
-
-### Parameter details
-- goal_tolerance: stop within this distance of the goal (m).
-- max_linear_speed: hard cap on forward command; lower to reduce top speed.
-- k_v: linear gain; lower for gentler acceleration toward the cap.
-- max_angular_speed: cap on steering magnitude; lower for gentler turns.
-- k_w: angular gain; lower for slower heading corrections.
-- angle_slowdown_threshold: radians of heading error above which linear speed is reduced; smaller means slow down sooner when misaligned.
-
-### Custom params file
-- Create a YAML with only the params you want to override (others use defaults):
-
-```
-# my_params.yaml
-point_nav:
-  ros__parameters:
-    max_linear_speed: 0.35
-    k_v: 0.45
-    max_angular_speed: 0.5
-    k_w: 0.8
-    goal_tolerance: 0.25
-    angle_slowdown_threshold: 0.3
 ```
 
-- Launch using your custom parameters:
+### Useful launch args
+- `enable_ekf:=true|false`
+- `enable_wheel_odom:=true|false`
+- `enable_robot_state_publisher:=true|false`
+- `use_xacro_description:=true|false` (default true; uses Simple_Autonomous xacro)
+- `enable_joint_state_from_ticks:=true|false` (publish `/joint_states` from `/wheel_ticks`)
+- `params_file:=/path/to/point_nav.defaults.yaml`
+- `ekf_params_file:=/path/to/ekf_fusion.yaml`
 
-```
-ros2 launch point_nav point_nav.launch.py params_file:=/full/path/to/my_params.yaml
-```
+## CLI (`set_goal`)
+```bash
+# Override active goal (default mode)
+ros2 run point_nav set_goal 2.0 0.5 --override
 
-## Assumptions
+# Add one goal to queue
+ros2 run point_nav set_goal 1.0 -0.2 --add-to-queue
 
-- ZED pose frame axes are aligned with rover: X forward, Y left, Z up.
-- The vehicle consuming `/joy` interprets the provided axes as described above.
-- If your setup differs (e.g., different axes indices or neutral values), adjust the mapping in `point_nav/point_nav/point_nav_node.py`.
+# Load goals from defaults file goal_inputs and queue them
+ros2 run point_nav set_goal --from-defaults --file-mode queue
 
-Note on hills / elevation (Z):
-- The controller is intentionally planar (2D). It reads pose X,Y and ignores Z (elevation).
-- Heading (yaw) is computed from the quaternion about the global Z axis, so roll/pitch from slopes do not affect steering.
+# One-off slower run (per-goal throttle)
+ros2 run point_nav set_goal 2.0 0.0 --throttle-scale 0.6
 
-## Docs
-
-- Quick start build/run and simulation: [QUICKSTART.md](./QUICKSTART.md)
-- Move to another PC via Git (VS Code or CLI): [MOVING.md](./MOVING.md)
-
-## Status Logging
-
-- The controller prints a status line at info level every `status_log_period` seconds (default 1.0), including movement direction ("moving forward/backward") and turn direction.
-- Change the rate at runtime:
-
-```
-ros2 param set /point_nav status_log_period 0.5
+# E-stop engage / release
+ros2 run point_nav set_goal --estop
+ros2 run point_nav set_goal --clear-estop
 ```
 
-## Topic Remapping (optional)
+## Throttle Controls
+- `global_throttle_scale`: global multiplier for all runs.
+- `forward_axis_scale` / `backward_axis_scale`: trigger output shaping per direction.
+- Per-goal `throttle_scale`: from `goal_inputs[].throttle_scale` or `set_goal --throttle-scale`.
 
-- If your pose topic differs from `/zed/zed_node/pose`, remap at launch:
+Effective speed is influenced by all of the above.
 
-```
-ros2 launch point_nav point_nav.launch.py --ros-args -r /zed/zed_node/pose:=/your/pose/topic
-```
+## Config Files
+- Main params + optional `goal_inputs`: `config/point_nav.defaults.yaml`
+- EKF fusion config: `config/ekf_fusion.yaml`
+- Rover description (xacro + fallback URDF): `urdf/`
+
+## Future Camera Placeholders
+- Placeholder entries for extra camera odometry are already added in `config/ekf_fusion.yaml` (commented as `odom2` and `odom3`).
+- Placeholder mount blocks are already added in:
+  - `urdf/robot_description.urdf.xacro`
+  - `urdf/point_nav_rover.urdf`
+- They are intentionally commented out, so current runtime behavior is unchanged until you uncomment and tune mounts/topics.
+
+## Notes
+- Default xacro model references `zed_wrapper` macros. If unavailable, launch with `use_xacro_description:=false` to use fallback URDF.
+- Wheel odometry requires valid `/joint_states` with wheel joint names.

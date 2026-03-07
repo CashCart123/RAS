@@ -1,105 +1,76 @@
-# Point-Nav Quickstart (ROS 2 Humble, Ubuntu 22.04)
+# Point-Nav Quickstart (ROS 2 Humble)
 
-## Prerequisites
-- ROS 2 Humble installed: `source /opt/ros/humble/setup.bash`
-- Colcon installed: `sudo apt install -y python3-colcon-common-extensions`
-
-## Build (run once per change)
+## 1) Build
 ```bash
 cd ~/ros2_ws
 source /opt/ros/humble/setup.bash
 colcon build --packages-select point_nav
-. install/setup.bash  # tell this shell about the new build
+. install/setup.bash
 ```
 
-## Every new terminal
-Always do this before using ROS 2 in that terminal:
+## 2) Launch stack
 ```bash
 source /opt/ros/humble/setup.bash
 . ~/ros2_ws/install/setup.bash
-```
-
-## Run the controller (Terminal A)
-```bash
-source /opt/ros/humble/setup.bash && . ~/ros2_ws/install/setup.bash
 ros2 launch point_nav point_nav.launch.py
 ```
 
-### Adjust status log rate (optional)
+This starts:
+- `robot_state_publisher` (xacro by default)
+- `wheel_odom_node`
+- `ekf_filter_node`
+- `point_nav_node`
+
+## 3) Send goals
 ```bash
+# Override current goal
+ros2 run point_nav set_goal 2.0 0.5 --override
+
+# Queue additional goal
+ros2 run point_nav set_goal 1.0 -0.3 --add-to-queue
+```
+
+## 4) File-based goals
+Edit `config/point_nav.defaults.yaml` under `goal_inputs`, then:
+```bash
+ros2 run point_nav set_goal --from-defaults --file-mode queue
+```
+
+## 5) E-stop
+```bash
+ros2 run point_nav set_goal --estop
+ros2 run point_nav set_goal --clear-estop
+```
+
+## 6) Useful toggles
+```bash
+# If zed_wrapper xacro macros are not available
+ros2 launch point_nav point_nav.launch.py use_xacro_description:=false
+
+# If you have wheel ticks topic and need joint_states
+ros2 launch point_nav point_nav.launch.py enable_joint_state_from_ticks:=true
+
+# Disable EKF (fallback to camera+wheel dead-reckoning mode in point_nav)
+ros2 launch point_nav point_nav.launch.py enable_ekf:=false
+```
+
+## 6.1) When adding new cameras later
+- Uncomment and tune camera mount placeholders in:
+  - `urdf/robot_description.urdf.xacro` (primary path)
+  - `urdf/point_nav_rover.urdf` (fallback path)
+- Uncomment `odom2` / `odom3` placeholder blocks in `config/ekf_fusion.yaml`.
+- Relaunch and confirm new odom topics + TF are valid before trusting fusion.
+
+## 7) Sanity checks
+```bash
+ros2 topic list | grep -E "goal_point|odometry/filtered|wheel/odom|joy|joint_states|point_nav/estop"
+ros2 node list
+ros2 topic echo /odometry/filtered
+```
+
+## 8) Runtime tuning examples
+```bash
+ros2 param set /point_nav global_throttle_scale 0.7
+ros2 param set /point_nav max_linear_speed 0.35
 ros2 param set /point_nav status_log_period 0.5
 ```
-
-## Send a goal (Terminal B)
-```bash
-source /opt/ros/humble/setup.bash && . ~/ros2_ws/install/setup.bash
-# CLI helper
-ros2 run point_nav set_goal 2.0 0.5
-
-### CLI helper usage
-Synopsis:
-`ros2 run point_nav set_goal <x> <y> [--count N] [--delay S] [--topic NAME]`
-
-- x, y: meters in rover frame (X forward, Y left). Use negative x to request reverse (requires `allow_reverse`=true).
-- --count: publish N times (default 3)
-- --delay: seconds between publishes (default 0.1)
-- --topic: goal topic (default `/goal_point`)
-```
-
-### Reverse test (optional)
-```bash
-# Enable reverse behavior if not already true via YAML
-ros2 param set /point_nav allow_reverse true
-
-# Send a goal behind the current heading (negative X)
-ros2 run point_nav set_goal -1.0 0.0
-```
-
-## If the rover/camera is not connected (simulate pose)
-Terminal C:
-```bash
-source /opt/ros/humble/setup.bash && . ~/ros2_ws/install/setup.bash
-# Publish a single pose at (0,0, yaw=0)
-ros2 topic pub --once /zed/zed_node/pose geometry_msgs/PoseStamped '{header: {frame_id: "odom"}, pose: {position: {x: 0.0, y: 0.0, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}}'
-
-# To simulate arrival at the goal position
-ros2 topic pub --once /zed/zed_node/pose geometry_msgs/PoseStamped '{header: {frame_id: "odom"}, pose: {position: {x: 2.0, y: 0.5, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}}'
-
-```
-With controller running (Terminal A), send a goal (Terminal B) as above.
-
-Watch Joy output (any terminal):
-```bash
-ros2 topic echo /joy   # Ctrl+C to stop
-```
-
-## Remap pose topic (if your ZED uses a different name)
-```bash
-ros2 launch point_nav point_nav.launch.py --ros-args -r /zed/zed_node/pose:=/your/pose/topic
-```
-
-## Tune parameters at runtime (optional)
-```bash
-# Slow linear speed further
-ros2 param set /point_nav max_linear_speed 0.35
-ros2 param set /point_nav k_v 0.5
-
-# Gentler turns
-ros2 param set /point_nav max_angular_speed 0.5
-ros2 param set /point_nav k_w 0.8
-
-# Stop distance
-ros2 param set /point_nav goal_tolerance 0.3
-```
-
-## Common checks
-```bash
-ros2 node list                    # expect /point_nav
-ros2 topic list | grep -E "goal_point|joy|pose"
-ros2 topic info /joy -v
-ros2 node info /point_nav         # publishers/subscribers and params
-```
-
-## Notes
-- Axes mapping: Joy `axes[5]` = forward (1.0 neutral → -1.0 full), `axes[2]` = reverse (1.0 → -1.0), `axes[0]` = steer (left +1.0, right -1.0).
-- If another program publishes `/joy` (e.g., joystick driver), stop it to avoid conflicts.

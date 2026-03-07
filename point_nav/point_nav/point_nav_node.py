@@ -1,16 +1,24 @@
 import math
-from typing import Optional
+from dataclasses import dataclass
+from pathlib import Path
+from typing import List, Optional
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 
 from geometry_msgs.msg import Point, PoseStamped
+from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Joy
+from std_msgs.msg import Bool
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover - ROS environments normally include pyyaml
+    yaml = None
 
 
 def yaw_from_quaternion(x: float, y: float, z: float, w: float) -> float:
-    # Standard yaw extraction (Z axis) from quaternion.
     siny_cosp = 2.0 * (w * z + x * y)
     cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
     return math.atan2(siny_cosp, cosy_cosp)
@@ -23,94 +31,236 @@ def wrap_to_pi(angle: float) -> float:
     return a - math.pi
 
 
+@dataclass
+class GoalItem:
+    x: float
+    y: float
+    throttle_scale: float
+
+
 class PointNavNode(Node):
     def __init__(self) -> None:
         super().__init__('point_nav_node')
 
-        # Parameters
-        self.declare_parameter('goal_tolerance', 0.2)  # meters
-        # Defaults below are conservative and match the installed YAML; YAML will override at runtime
-        self.declare_parameter('max_linear_speed', 0.4)  # normalized to joy [-1..1]
-        self.declare_parameter('max_angular_speed', 0.5)  # rad/s equivalent, mapped to steering [-1..1]
+        # Navigation control
+        self.declare_parameter('goal_tolerance', 0.2)
+        self.declare_parameter('max_linear_speed', 0.4)
+        self.declare_parameter('max_angular_speed', 0.5)
         self.declare_parameter('k_v', 0.5)
         self.declare_parameter('k_w', 0.8)
-        self.declare_parameter('angle_slowdown_threshold', 0.3)  # rad; reduce v when > threshold
-        # Limit how far the forward trigger is pressed: 1.0 (neutral) -> -1.0 (full).
-        # Setting forward_axis_scale=0.5 caps to half-press (axis min 0.0), preventing full speed.
+        self.declare_parameter('angle_slowdown_threshold', 0.3)
         self.declare_parameter('forward_axis_scale', 0.5)
-        # Limit reverse trigger (axes[2]) when commanding reverse.
         self.declare_parameter('backward_axis_scale', 0.5)
-        # Limit steering output on axes[0] to avoid full-lock turns. 1.0 = no cap, 0.5 = half lock.
         self.declare_parameter('steer_axis_scale', 0.7)
-        # Throttle status update period (seconds). Set to 1.0 for 1 Hz.
         self.declare_parameter('status_log_period', 1.0)
-        # Allow reversing when goal is largely behind rover
         self.declare_parameter('allow_reverse', True)
+
+        # Turning behavior: always keep some motion instead of rotate-in-place
+        self.declare_parameter('min_moving_speed', 0.08)
+        self.declare_parameter('initial_forward_motion_time', 0.35)
+
+        # Combined odom
+        self.declare_parameter('use_combined_odom', True)
+        self.declare_parameter('camera_pose_timeout', 0.5)
+        self.declare_parameter('camera_pose_topic', '/zed/zed_node/pose')
+        self.declare_parameter('use_ekf_odom', True)
+        self.declare_parameter('ekf_odom_topic', '/odometry/filtered')
+        self.declare_parameter('wheel_odom_topic', '/wheel/odom')
+
+        # Topics for queue/override and estop
+        self.declare_parameter('goal_override_topic', '/goal_point')
+        self.declare_parameter('goal_add_topic', '/goal_point/add')
+        self.declare_parameter('estop_topic', '/point_nav/estop')
+
+        # Throttle controls
+        self.declare_parameter('global_throttle_scale', 1.0)
+
+        # File-based goals
+        self.declare_parameter('goal_file_path', '')
+        self.declare_parameter('load_goals_on_startup', False)
+        self.declare_parameter('goal_file_mode', 'queue')  # queue | override
 
         # Internal state
         self._x = 0.0
         self._y = 0.0
         self._yaw = 0.0
-        # We operate in the ground (XY) plane only; Z is ignored.
-        # Track whether we have received at least one pose.
         self._has_pose = False
 
-        self._goal: Optional[Point] = None
-        self._active = False
-        self._last_stop_sent = False
-        self._last_status_log_ns = 0  # throttle logs
+        self._wheel_vx = 0.0
+        self._wheel_stamp_ns = 0
+        self._cam_stamp_ns = 0
+        self._last_pose_update_ns = 0
 
-        # QoS suitable for ZED pose (usually reliable)
+        self._goal_queue: List[GoalItem] = []
+        self._goal: Optional[GoalItem] = None
+        self._goal_start_ns = 0
+        self._active = False
+        self._estop = False
+
+        self._last_stop_sent = False
+        self._last_status_log_ns = 0
+
         qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             history=HistoryPolicy.KEEP_LAST,
             depth=10,
         )
 
-        self._pose_sub = self.create_subscription(
-            PoseStamped, '/zed/zed_node/pose', self._pose_cb, qos
-        )
-        self._goal_sub = self.create_subscription(
-            Point, '/goal_point', self._goal_cb, qos
-        )
+        camera_topic = str(self.get_parameter('camera_pose_topic').value)
+        use_ekf_odom = bool(self.get_parameter('use_ekf_odom').value)
+        ekf_odom_topic = str(self.get_parameter('ekf_odom_topic').value)
+        wheel_topic = str(self.get_parameter('wheel_odom_topic').value)
+        override_topic = str(self.get_parameter('goal_override_topic').value)
+        add_topic = str(self.get_parameter('goal_add_topic').value)
+        estop_topic = str(self.get_parameter('estop_topic').value)
+
+        self._ekf_sub = None
+        self._pose_sub = None
+        self._wheel_sub = None
+        if use_ekf_odom:
+            self._ekf_sub = self.create_subscription(Odometry, ekf_odom_topic, self._ekf_odom_cb, qos)
+        else:
+            self._pose_sub = self.create_subscription(PoseStamped, camera_topic, self._pose_cb, qos)
+            self._wheel_sub = self.create_subscription(Odometry, wheel_topic, self._wheel_odom_cb, qos)
+        self._goal_override_sub = self.create_subscription(Point, override_topic, self._goal_override_cb, qos)
+        self._goal_add_sub = self.create_subscription(Point, add_topic, self._goal_add_cb, qos)
+        self._estop_sub = self.create_subscription(Bool, estop_topic, self._estop_cb, qos)
+
         self._joy_pub = self.create_publisher(Joy, '/joy', 10)
 
-        self._timer = self.create_timer(0.05, self._on_timer)  # 20 Hz
+        self._timer = self.create_timer(0.05, self._on_timer)
 
-        self.get_logger().info('PointNavNode ready. Publish geometry_msgs/Point to /goal_point')
+        if bool(self.get_parameter('load_goals_on_startup').value):
+            self._load_goals_from_file()
 
-    # Callbacks
+        self.get_logger().info(
+            f'PointNav ready. override={override_topic}, add={add_topic}, estop={estop_topic}, '
+            f'pose_source={"ekf" if use_ekf_odom else "camera+wheel"}'
+        )
+
     def _pose_cb(self, msg: PoseStamped) -> None:
-        # Use only X,Y from pose; Z (elevation) is deliberately ignored so hills do not affect control.
         self._x = msg.pose.position.x
         self._y = msg.pose.position.y
         q = msg.pose.orientation
         self._yaw = yaw_from_quaternion(q.x, q.y, q.z, q.w)
         self._has_pose = True
 
-    def _goal_cb(self, msg: Point) -> None:
-        self._goal = msg
-        self._active = True
-        self._last_stop_sent = False
-        self.get_logger().info(f'Received goal: x={msg.x:.3f}, y={msg.y:.3f}')
+        now_ns = self.get_clock().now().nanoseconds
+        self._cam_stamp_ns = now_ns
+        self._last_pose_update_ns = now_ns
 
-    # Control loop
+    def _wheel_odom_cb(self, msg: Odometry) -> None:
+        self._wheel_vx = float(msg.twist.twist.linear.x)
+        self._wheel_stamp_ns = self.get_clock().now().nanoseconds
+
+    def _ekf_odom_cb(self, msg: Odometry) -> None:
+        self._x = float(msg.pose.pose.position.x)
+        self._y = float(msg.pose.pose.position.y)
+        q = msg.pose.pose.orientation
+        self._yaw = yaw_from_quaternion(q.x, q.y, q.z, q.w)
+        self._has_pose = True
+        self._last_pose_update_ns = self.get_clock().now().nanoseconds
+
+    def _goal_override_cb(self, msg: Point) -> None:
+        self._goal_queue.clear()
+        self._goal = self._goal_from_point(msg)
+        self._active = True
+        self._goal_start_ns = self.get_clock().now().nanoseconds
+        self._last_stop_sent = False
+        self.get_logger().info(
+            f'Override goal: x={self._goal.x:.3f}, y={self._goal.y:.3f}, throttle={self._goal.throttle_scale:.2f}'
+        )
+
+    def _goal_add_cb(self, msg: Point) -> None:
+        goal = self._goal_from_point(msg)
+        self._goal_queue.append(goal)
+
+        if not self._active and self._goal is None:
+            self._activate_next_goal()
+        else:
+            self.get_logger().info(
+                f'Queued goal #{len(self._goal_queue)}: x={goal.x:.3f}, y={goal.y:.3f}, throttle={goal.throttle_scale:.2f}'
+            )
+
+    def _estop_cb(self, msg: Bool) -> None:
+        self._estop = bool(msg.data)
+        if self._estop:
+            self._active = False
+            self._goal = None
+            self._goal_queue.clear()
+            self._publish_stop()
+            self._last_stop_sent = True
+            self.get_logger().warn('E-stop engaged. Motion halted and queue cleared.')
+        else:
+            self.get_logger().info('E-stop released.')
+
+    def _goal_from_point(self, msg: Point) -> GoalItem:
+        throttle = 1.0
+        if msg.z > 0.0:
+            throttle = float(max(0.05, min(1.0, msg.z)))
+        return GoalItem(x=float(msg.x), y=float(msg.y), throttle_scale=throttle)
+
+    def _activate_next_goal(self) -> bool:
+        if not self._goal_queue:
+            self._goal = None
+            self._active = False
+            return False
+
+        self._goal = self._goal_queue.pop(0)
+        self._active = True
+        self._goal_start_ns = self.get_clock().now().nanoseconds
+        self._last_stop_sent = False
+        self.get_logger().info(
+            f'Activated queued goal: x={self._goal.x:.3f}, y={self._goal.y:.3f}, throttle={self._goal.throttle_scale:.2f}; '
+            f'{len(self._goal_queue)} remaining'
+        )
+        return True
+
+    def _integrate_wheel_dead_reckoning(self, now_ns: int) -> None:
+        if bool(self.get_parameter('use_ekf_odom').value):
+            return
+        if not bool(self.get_parameter('use_combined_odom').value):
+            return
+        if self._last_pose_update_ns == 0:
+            self._last_pose_update_ns = now_ns
+            return
+
+        camera_timeout_ns = int(max(0.05, float(self.get_parameter('camera_pose_timeout').value)) * 1e9)
+        camera_is_stale = (now_ns - self._cam_stamp_ns) > camera_timeout_ns
+        wheel_is_fresh = (now_ns - self._wheel_stamp_ns) <= camera_timeout_ns
+
+        if camera_is_stale and wheel_is_fresh:
+            dt = max(0.0, (now_ns - self._last_pose_update_ns) * 1e-9)
+            self._x += self._wheel_vx * math.cos(self._yaw) * dt
+            self._y += self._wheel_vx * math.sin(self._yaw) * dt
+            self._has_pose = True
+
+        self._last_pose_update_ns = now_ns
+
     def _on_timer(self) -> None:
+        now_ns = self.get_clock().now().nanoseconds
+        self._integrate_wheel_dead_reckoning(now_ns)
+
+        if self._estop:
+            if not self._last_stop_sent:
+                self._publish_stop()
+                self._last_stop_sent = True
+            return
+
         if not self._has_pose:
-            # No odom yet; send neutral once to be safe then wait
             if not self._last_stop_sent:
                 self._publish_stop()
                 self._last_stop_sent = True
             return
 
         if not self._active or self._goal is None:
-            # Idle; keep neutral periodically
+            if self._activate_next_goal():
+                return
             if not self._last_stop_sent:
                 self._publish_stop()
                 self._last_stop_sent = True
             return
 
-        # Parameters (fetch lazily to allow dynamic changes)
         goal_tol = float(self.get_parameter('goal_tolerance').value)
         max_v = float(self.get_parameter('max_linear_speed').value)
         max_w = float(self.get_parameter('max_angular_speed').value)
@@ -120,98 +270,177 @@ class PointNavNode(Node):
         forward_scale = float(self.get_parameter('forward_axis_scale').value)
         backward_scale = float(self.get_parameter('backward_axis_scale').value)
         allow_reverse = bool(self.get_parameter('allow_reverse').value)
+        steer_scale = float(self.get_parameter('steer_axis_scale').value)
+        global_throttle = float(self.get_parameter('global_throttle_scale').value)
 
-        # Compute errors in odom frame (which is aligned with rover/camera axes as given)
+        min_moving_speed = max(0.0, float(self.get_parameter('min_moving_speed').value))
+        initial_move_time = max(0.0, float(self.get_parameter('initial_forward_motion_time').value))
+
         dx = self._goal.x - self._x
         dy = self._goal.y - self._y
         dist = math.hypot(dx, dy)
 
         if dist <= goal_tol:
-            self._publish_stop()
-            if not self._last_stop_sent:
-                self.get_logger().info('Goal reached. Stopping.')
+            self.get_logger().info(
+                f'Goal reached. x={self._goal.x:.3f}, y={self._goal.y:.3f}, remaining={len(self._goal_queue)}'
+            )
+            self._goal = None
             self._active = False
+            self._publish_stop()
             self._last_stop_sent = True
             return
 
         desired_heading = math.atan2(dy, dx)
         heading_error = wrap_to_pi(desired_heading - self._yaw)
 
-        # Decide whether to reverse based on heading alignment
         use_reverse = False
         heading_eff = heading_error
         if allow_reverse and abs(heading_error) > (math.pi / 2.0):
             use_reverse = True
             heading_eff = wrap_to_pi((desired_heading + math.pi) - self._yaw)
 
-        # Proportional controller
         v_cmd = (-k_v * dist) if use_reverse else (k_v * dist)
         if abs(heading_eff) > angle_slow:
-            scale = max(0.0, math.cos(min(abs(heading_eff), math.pi/2)))
-            v_cmd *= scale
+            slowdown = max(0.0, math.cos(min(abs(heading_eff), math.pi / 2.0)))
+            v_cmd *= slowdown
 
-        # Clamp speeds (allow reverse)
         v_cmd = max(-max_v, min(max_v, v_cmd))
-        w_cmd = max(-max_w, min(max_w, k_w * heading_eff))
 
-        # Throttled status about heading and turn command (configurable)
-        now_ns = self.get_clock().now().nanoseconds
-        status_period = float(self.get_parameter('status_log_period').value) if self.has_parameter('status_log_period') else 1.0
-        period_ns = max(0.1, status_period) * 1_000_000_000
+        # Improve turning behavior: small initial straight segment then turn while moving.
+        elapsed_s = max(0.0, (now_ns - self._goal_start_ns) * 1e-9)
+        if elapsed_s < initial_move_time and not use_reverse:
+            w_cmd = 0.0
+            v_cmd = max(min_moving_speed, abs(v_cmd))
+        else:
+            w_cmd = max(-max_w, min(max_w, k_w * heading_eff))
+            if abs(v_cmd) < min_moving_speed:
+                v_cmd = math.copysign(min_moving_speed, -1.0 if use_reverse else 1.0)
+
+        # Per-run and global throttle scaling
+        throttle_scale = max(0.05, min(1.0, self._goal.throttle_scale * max(0.05, min(1.0, global_throttle))))
+        v_cmd *= throttle_scale
+
+        status_period = float(self.get_parameter('status_log_period').value)
+        period_ns = int(max(0.1, status_period) * 1e9)
         if now_ns - self._last_status_log_ns >= period_ns:
-            heading_off_deg = abs(math.degrees(heading_error))
-            turn_dir = 'left' if w_cmd > 0.0 else ('right' if w_cmd < 0.0 else 'none')
-            turn_mag_deg = abs(math.degrees(w_cmd))
-            motion = 'forward' if v_cmd >= 0.0 else 'backward'
-            # Print at INFO so it shows in normal runs; still throttled to avoid spam.
+            motion = 'forward' if v_cmd >= 0.0 else 'reverse'
             self.get_logger().info(
-                f"moving {motion}; heading error {heading_off_deg:.1f} deg, dist {dist:.2f} m; "
-                f"turning {turn_dir} {turn_mag_deg:.1f} deg/s"
+                f'motion={motion} dist={dist:.2f}m head_err={math.degrees(heading_error):.1f}deg '
+                f'v={v_cmd:.2f} w={w_cmd:.2f} throttle={throttle_scale:.2f}'
             )
             self._last_status_log_ns = now_ns
 
-        # Map to Joy
-        steer_scale = float(self.get_parameter('steer_axis_scale').value) if self.has_parameter('steer_axis_scale') else 1.0
         joy_msg = self._joy_from_cmd(v_cmd, w_cmd, max_v, max_w, forward_scale, backward_scale, steer_scale)
         self._joy_pub.publish(joy_msg)
         self._last_stop_sent = False
 
+    def _load_goals_from_file(self) -> None:
+        file_path = str(self.get_parameter('goal_file_path').value).strip()
+        if not file_path:
+            self.get_logger().warn('load_goals_on_startup=true but goal_file_path is empty.')
+            return
+        if yaml is None:
+            self.get_logger().error('PyYAML is unavailable. Cannot load goal file.')
+            return
+
+        path = Path(file_path)
+        if not path.exists():
+            self.get_logger().warn(f'Goal file not found: {path}')
+            return
+
+        try:
+            data = yaml.safe_load(path.read_text()) or {}
+        except Exception as exc:  # pragma: no cover - safety logging
+            self.get_logger().error(f'Failed to parse goal file {path}: {exc}')
+            return
+
+        goals = self._extract_goals_from_yaml(data)
+        if not goals:
+            self.get_logger().warn(f'No goals found in {path}. Expected key: goal_inputs')
+            return
+
+        mode = str(self.get_parameter('goal_file_mode').value).strip().lower()
+        if mode == 'override':
+            self._goal_queue = goals[1:]
+            self._goal = goals[0]
+            self._active = True
+            self._goal_start_ns = self.get_clock().now().nanoseconds
+            self.get_logger().info(f'Loaded {len(goals)} goal(s) from {path} in override mode.')
+            return
+
+        for goal in goals:
+            self._goal_queue.append(goal)
+        if not self._active and self._goal is None:
+            self._activate_next_goal()
+        self.get_logger().info(f'Loaded {len(goals)} goal(s) from {path} in queue mode.')
+
+    @staticmethod
+    def _extract_goals_from_yaml(data: object) -> List[GoalItem]:
+        goal_items = None
+        if isinstance(data, dict):
+            if isinstance(data.get('goal_inputs'), list):
+                goal_items = data.get('goal_inputs')
+            elif isinstance(data.get('point_nav'), dict):
+                pn = data.get('point_nav')
+                if isinstance(pn.get('goal_inputs'), list):
+                    goal_items = pn.get('goal_inputs')
+                elif isinstance(pn.get('ros__parameters'), dict) and isinstance(pn['ros__parameters'].get('goal_inputs'), list):
+                    goal_items = pn['ros__parameters'].get('goal_inputs')
+
+        if not isinstance(goal_items, list):
+            return []
+
+        goals: List[GoalItem] = []
+        for item in goal_items:
+            if not isinstance(item, dict):
+                continue
+            if 'x' not in item or 'y' not in item:
+                continue
+            throttle = float(item.get('throttle_scale', 1.0))
+            throttle = max(0.05, min(1.0, throttle))
+            goals.append(GoalItem(x=float(item['x']), y=float(item['y']), throttle_scale=throttle))
+
+        return goals
+
     def _publish_stop(self) -> None:
-        # Neutral: steering 0.0; triggers released -> 1.0
         joy = Joy()
-        axes = [0.0] * 6  # ensure we have indices 0..5
-        axes[0] = 0.0  # steering center
-        axes[2] = 1.0  # backward trigger released
-        axes[5] = 1.0  # forward trigger released
+        axes = [0.0] * 6
+        axes[0] = 0.0
+        axes[2] = 1.0
+        axes[5] = 1.0
         joy.axes = axes
         joy.buttons = []
         self._joy_pub.publish(joy)
 
     @staticmethod
-    def _joy_from_cmd(v_cmd: float, w_cmd: float, max_v: float, max_w: float, forward_scale: float = 1.0, backward_scale: float = 1.0, steer_scale: float = 1.0) -> Joy:
-        # Steering: map w_cmd in [-max_w, max_w] to [-1, 1], then scale to limit full lock
+    def _joy_from_cmd(
+        v_cmd: float,
+        w_cmd: float,
+        max_v: float,
+        max_w: float,
+        forward_scale: float = 1.0,
+        backward_scale: float = 1.0,
+        steer_scale: float = 1.0,
+    ) -> Joy:
         steer = 0.0 if max_w <= 0.0 else max(-1.0, min(1.0, w_cmd / max_w))
         steer_scale = max(0.0, min(1.0, steer_scale))
         steer *= steer_scale
 
-        # Triggers: neutral 1.0; increasing command moves toward -1.0
         forward_axis = 1.0
         backward_axis = 1.0
 
         if v_cmd >= 0.0:
-            # Apply output scaling so the trigger is never fully pressed.
             scale = max(0.0, min(1.0, forward_scale))
             forward_axis = 1.0 if max_v <= 0.0 else 1.0 - 2.0 * scale * max(0.0, min(1.0, v_cmd / max_v))
         else:
-            # Reverse command: apply reverse trigger scaling
             bscale = max(0.0, min(1.0, backward_scale))
             backward_axis = 1.0 if max_v <= 0.0 else 1.0 - 2.0 * bscale * max(0.0, min(1.0, (-v_cmd) / max_v))
 
         joy = Joy()
         axes = [0.0] * 6
-        axes[0] = steer  # left +scale, right -scale
-        axes[2] = backward_axis  # back trigger
-        axes[5] = forward_axis   # fwd trigger
+        axes[0] = steer
+        axes[2] = backward_axis
+        axes[5] = forward_axis
         joy.axes = axes
         joy.buttons = []
         return joy
