@@ -1,0 +1,37 @@
+﻿Boards User Guides
+
+Science
+
+Arm Board: Flash 260309_Science_on_arm_board.ino
+Drill Linear Rail (D-pad up and down)
+Servo (D-pad left and right)
+Microscope raise and lower (A and Y)
+
+Scoop Board: Flash 260309_Science_on_scoop_board.ino
+Drill (RB) (Plug into one of the singles)
+Linear Actuator (X and B) (Plug into one of the doubles)
+
+Excavation and Construction
+
+Scoop Board: Flash 2600309_Scoop_Old_Board
+A,X,B,Y 
+
+Arm
+
+Canbus Board: Flash 250923_IK_logging_arm
+Arm Board: Flash 260308_Arm_with_Fwiends
+
+Left joystick to move arm, see gui for where it is
+A,B for side to side stepper
+RB for Emag (Currently non-functional)
+Move servo (D-pad up and down)
+
+Ensure armik.py is running. This does the actual inverse kinematics calculations and sends commands to the Canbus only PCB. 
+
+Trouble shoot steps:
+Make sure everything is plugged in
+With the arm, restart individual components of the code until it works. There is a few bugs there I haven’t quite worked out. I think the canbus needs to be running before the python script is launched’
+Run rqt_graph to check if everything is talking
+
+
+
