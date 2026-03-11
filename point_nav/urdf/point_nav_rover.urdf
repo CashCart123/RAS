@@ -86,7 +86,8 @@
   <joint name="zed_front_mount_joint" type="fixed">
     <parent link="base_link"/>
     <child link="zed_front_camera_link"/>
-    <origin xyz="0.45 0.00 0.68" rpy="0 0 0"/>
+    <!-- From box geometry: x=0.385-0.065479, y=0, z=0.125+0.217128; 30 deg incline -->
+    <origin xyz="0.319521 0.0 0.342128" rpy="0 -0.523599 0"/>
   </joint>
   <link name="zed_front_camera_link"/>
 
@@ -97,20 +98,18 @@
   </joint>
   <link name="zed_rear_camera_link"/>
 
-  <!-- PLACEHOLDERS FOR FUTURE CAMERAS (disabled/commented by default) -->
-  <!--
+  <!-- Additional side camera frames -->
   <joint name="zed_left_mount_joint" type="fixed">
     <parent link="base_link"/>
     <child link="zed_left_camera_link"/>
-    <origin xyz="0.10 0.30 0.68" rpy="0 0 1.5708"/>
+    <origin xyz="0.3095 0.30232 0.21478" rpy="0 -0.523599 1.5708"/>
   </joint>
   <link name="zed_left_camera_link"/>
 
   <joint name="zed_right_mount_joint" type="fixed">
     <parent link="base_link"/>
     <child link="zed_right_camera_link"/>
-    <origin xyz="0.10 -0.30 0.68" rpy="0 0 -1.5708"/>
+    <origin xyz="0.3095 -0.30232 0.21478" rpy="0 -0.523599 -1.5708"/>
   </joint>
   <link name="zed_right_camera_link"/>
-  -->
 </robot>

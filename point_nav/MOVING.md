@@ -4,7 +4,10 @@ Transfer the package to another PC using Git with two workflows: VS Code → VS 
 
 ## Assumptions
 - Target PC has ROS 2 Humble installed (`/opt/ros/humble`).
-- You use a standard workspace at `~/ros2_ws` and want `point_nav/` inside `~/ros2_ws/src/`.
+- You keep source in one folder and build in a separate workspace:
+  - Source repo: `~/RAS-main`
+  - Build workspace: `~/point_nav_ws`
+  - Link: `~/point_nav_ws/src/point_nav -> ~/RAS-main/point_nav`
 
 ## VS Code → VS Code
 On the source PC (publish):
@@ -20,16 +23,20 @@ On the source PC (publish):
 On the target PC (clone in VS Code):
 1) Install Git: `sudo apt install -y git`.
 2) VS Code → Ctrl+Shift+P → “Git: Clone” → paste `<YOUR_REMOTE_URL>`.
-3) Choose folder `~/ros2_ws/src` (VS Code will create a subfolder, e.g., `RAS/`).
-4) Open the cloned folder in VS Code.
-5) Build and source in a terminal:
+3) Choose folder `~` and clone as `RAS-main` (or clone then rename).
+4) Open `~/RAS-main` in VS Code.
+5) In a terminal, create the build workspace symlink:
    ```bash
-   cd ~/ros2_ws
+   bash ~/RAS-main/point_nav/tools/setup_ws.sh
+   ```
+6) Build and source in a terminal:
+   ```bash
+   cd ~/point_nav_ws
    source /opt/ros/humble/setup.bash
    colcon build --packages-select point_nav
    . install/setup.bash
    ```
-6) Run as usual:
+7) Run as usual:
    ```bash
    ros2 launch point_nav point_nav.launch.py
    ```
@@ -41,10 +48,10 @@ On the source PC (publish from VS Code):
 On the target PC (clone via terminal):
 ```bash
 sudo apt install -y git
-mkdir -p ~/ros2_ws/src && cd ~/ros2_ws/src
-git clone <YOUR_REMOTE_URL> RAS   # or any folder name
-# Ensure point_nav/ is inside ~/ros2_ws/src/ (e.g., at ~/ros2_ws/src/RAS/point_nav)
-cd ~/ros2_ws
+cd ~
+git clone <YOUR_REMOTE_URL> RAS-main
+bash ~/RAS-main/point_nav/tools/setup_ws.sh
+cd ~/point_nav_ws
 source /opt/ros/humble/setup.bash
 colcon build --packages-select point_nav
 . install/setup.bash

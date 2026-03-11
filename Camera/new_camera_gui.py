@@ -193,7 +193,13 @@ if os.path.exists(CONFIG_PATH):
     with open(CONFIG_PATH, 'r') as f:
         urls = [c['url'] for c in json.load(f)['cameras']]
 else:
-    urls = [ "rtsp:/ras:ras@192.168.1.14:8554/profile0", "rtsp:/ras:ras@192.168.1.13:8554/profile0"] # rtsp urls here
+    urls = [
+        'rtsp:/ras:ras@192.168.1.247:554/stream0',
+        'rtsp:/ras:ras@192.168.1.6:554/stream0',
+        'rtsp:/ras:ras@192.168.1.250:554/stream0',
+        #'rtsp:/ras:ras@192.168.1.19:8554/stream0',
+        'rtsp:/ras:ras@192.168.1.11:554/stream0',
+        'rtsp:/ras:ras@192.168.1.22:8554/stream0',] # rtsp urls here
 
 camera_handlers = [CameraHandler(i, url) for i, url in enumerate(urls)]
 fullscreen_cam = None

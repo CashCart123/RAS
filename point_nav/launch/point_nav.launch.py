@@ -78,7 +78,10 @@ def generate_launch_description():
             name='robot_state_publisher',
             output='screen',
             parameters=[{
-                'robot_description': Command(['xacro ', LaunchConfiguration('urdf_xacro_file')]),
+                'robot_description': ParameterValue(
+                    Command(['xacro ', LaunchConfiguration('urdf_xacro_file')]),
+                    value_type=str,
+                ),
             }],
             condition=IfCondition(
                 PythonExpression([
@@ -95,7 +98,10 @@ def generate_launch_description():
             name='robot_state_publisher',
             output='screen',
             parameters=[{
-                'robot_description': Command(['cat ', LaunchConfiguration('urdf_file')]),
+                'robot_description': ParameterValue(
+                    Command(['cat ', LaunchConfiguration('urdf_file')]),
+                    value_type=str,
+                ),
             }],
             condition=IfCondition(
                 PythonExpression([

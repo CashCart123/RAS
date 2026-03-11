@@ -1,0 +1,9 @@
+# File-based goal inputs for point_nav CLI/startup loading.
+# Not used as a ROS params file.
+goal_inputs:
+  - x: 1.5
+    y: 0.0
+    throttle_scale: 0.7
+  - x: 2.0
+    y: 0.8
+    throttle_scale: 0.6

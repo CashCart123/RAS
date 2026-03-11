@@ -18,9 +18,9 @@ def default_config_path() -> str:
     try:
         from ament_index_python.packages import get_package_share_directory
 
-        return str(Path(get_package_share_directory('point_nav')) / 'config' / 'point_nav.defaults.yaml')
+        return str(Path(get_package_share_directory('point_nav')) / 'config' / 'goal_inputs.defaults.yaml')
     except Exception:
-        return str(Path(__file__).resolve().parents[1] / 'config' / 'point_nav.defaults.yaml')
+        return str(Path(__file__).resolve().parents[1] / 'config' / 'goal_inputs.defaults.yaml')
 
 
 def parse_args():
@@ -28,10 +28,7 @@ def parse_args():
 
     parser.add_argument('x', nargs='?', type=float, help='Goal X in meters (forward)')
     parser.add_argument('y', nargs='?', type=float, help='Goal Y in meters (left)')
-
-    mode_group = parser.add_mutually_exclusive_group()
-    mode_group.add_argument('--override', action='store_true', help='Replace active goal + clear queue')
-    mode_group.add_argument('--add-to-queue', action='store_true', help='Append goal(s) to queue')
+    parser.add_argument('--queue', action='store_true', help='Append goal(s) to queue (default behavior is override)')
 
     parser.add_argument('--throttle-scale', type=float, default=1.0, help='Per-goal throttle scale in (0,1]')
     parser.add_argument('--count', type=int, default=3, help='Times to publish each message [default: 3]')
@@ -42,13 +39,6 @@ def parse_args():
     parser.add_argument('--estop-topic', type=str, default='/point_nav/estop', help='E-stop topic')
 
     parser.add_argument('--file', type=str, default='', help='YAML file containing goal_inputs list')
-    parser.add_argument('--from-defaults', action='store_true', help='Load goals from point_nav.defaults.yaml')
-    parser.add_argument(
-        '--file-mode',
-        choices=['override', 'queue'],
-        default='queue',
-        help='How file goals are sent: override first or enqueue all',
-    )
 
     parser.add_argument('--estop', action='store_true', help='Engage e-stop and halt rover immediately')
     parser.add_argument('--clear-estop', action='store_true', help='Release e-stop')
@@ -137,11 +127,9 @@ def main():
 
     goals: List[Point] = []
 
-    file_path = ''
-    if args.from_defaults:
+    file_path = args.file.strip() if args.file else ''
+    if not file_path and args.x is None and args.y is None:
         file_path = default_config_path()
-    elif args.file:
-        file_path = args.file
 
     if file_path:
         path = Path(file_path)
@@ -156,15 +144,9 @@ def main():
         goals.append(Point(x=args.x, y=args.y, z=max(0.05, min(1.0, args.throttle_scale))))
 
     if not goals:
-        raise SystemExit('No goals to publish. Provide x y, --file, or --from-defaults.')
+        raise SystemExit('No goals to publish. Provide x y or --file.')
 
-    explicit_mode = args.override or args.add_to_queue
-    if explicit_mode:
-        override_mode = args.override
-    elif file_path and args.x is None and args.y is None:
-        override_mode = args.file_mode == 'override'
-    else:
-        override_mode = True
+    override_mode = not args.queue
 
     if override_mode:
         first = goals[0]

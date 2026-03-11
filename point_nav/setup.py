@@ -10,7 +10,10 @@ setup(
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', ['launch/point_nav.launch.py']),
-        ('share/' + package_name + '/config', ['config/point_nav.defaults.yaml', 'config/ekf_fusion.yaml']),
+        (
+            'share/' + package_name + '/config',
+            ['config/point_nav.defaults.yaml', 'config/ekf_fusion.yaml', 'config/goal_inputs.defaults.yaml'],
+        ),
         (
             'share/' + package_name + '/urdf',
             ['urdf/point_nav_rover.urdf', 'urdf/robot_description.urdf.xacro', 'urdf/inertial_macros.xacro'],

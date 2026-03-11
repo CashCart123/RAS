@@ -1,5 +1,5 @@
 # Point-Nav default parameters (ROS 2 YAML)
-# This file also supports file-based goal input via `goal_inputs`.
+# Keep this file ROS-params-compatible (no top-level custom sequences/maps).
 
 point_nav:
   ros__parameters:
@@ -49,12 +49,3 @@ point_nav:
     # Launch injects this YAML file path as `goal_file_path` automatically.
     load_goals_on_startup: false
     goal_file_mode: queue  # queue | override
-
-# Optional file-based goals used by startup loading and `set_goal --from-defaults`
-goal_inputs:
-  - x: 1.5
-    y: 0.0
-    throttle_scale: 0.7
-  - x: 2.0
-    y: 0.8
-    throttle_scale: 0.6

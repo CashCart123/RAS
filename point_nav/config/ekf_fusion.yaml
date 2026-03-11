@@ -1,5 +1,11 @@
 ekf_filter_node:
   ros__parameters:
+    # For multi-camera setups, follow Stereolabs guidance and disable camera TF publishing
+    # in each ZED node when using an external filter (EKF) to avoid TF conflicts.
+    # Example in ZED params:
+    #   pos_tracking:
+    #     publish_tf: false
+
     frequency: 30.0
     sensor_timeout: 0.2
     two_d_mode: true
@@ -40,32 +46,27 @@ ekf_filter_node:
     odom1_relative: false
     odom1_queue_size: 10
 
-    # ------------------------------------------------------------------------
-    # PLACEHOLDERS FOR FUTURE CAMERAS (disabled until uncommented)
-    # Keep these commented to avoid changing runtime behavior.
-    #
-    # Example for additional ZED 2i / ZED Mini odom feeds:
-    #
-    # odom2: /zed_left/zed_node/odom
-    # odom2_config: [
-    #   true,  true,  false,
-    #   false, false, true,
-    #   true,  true,  false,
-    #   false, false, true,
-    #   false, false, false
-    # ]
-    # odom2_differential: false
-    # odom2_relative: false
-    # odom2_queue_size: 10
-    #
-    # odom3: /zed_right/zed_node/odom
-    # odom3_config: [
-    #   true,  true,  false,
-    #   false, false, true,
-    #   true,  true,  false,
-    #   false, false, true,
-    #   false, false, false
-    # ]
-    # odom3_differential: false
-    # odom3_relative: false
-    # odom3_queue_size: 10
+    # Additional camera odometry feeds (left/right)
+    odom2: /zed_left/zed_node/odom
+    odom2_config: [
+      true,  true,  false,
+      false, false, true,
+      true,  true,  false,
+      false, false, true,
+      false, false, false
+    ]
+    odom2_differential: false
+    odom2_relative: false
+    odom2_queue_size: 10
+
+    odom3: /zed_right/zed_node/odom
+    odom3_config: [
+      true,  true,  false,
+      false, false, true,
+      true,  true,  false,
+      false, false, true,
+      false, false, false
+    ]
+    odom3_differential: false
+    odom3_relative: false
+    odom3_queue_size: 10

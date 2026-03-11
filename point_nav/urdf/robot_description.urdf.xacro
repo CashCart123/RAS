@@ -1,5 +1,9 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="robot">
+    <!-- Camera model args let you swap zed2i/zedm/other supported models without editing joints -->
+    <xacro:arg name="camera_model_front" default="zed2i" />
+    <xacro:arg name="camera_model_left" default="zed2i" />
+    <xacro:arg name="camera_model_right" default="zed2i" />
 
     <xacro:include filename="inertial_macros.xacro" />
 
@@ -60,7 +64,7 @@
     </gazebo>
 
     <!-- ZED 2i camera instance (minimal) -->
-    <xacro:zed_camera name="zed_front" model="zed2i">
+    <xacro:zed_camera name="zed_front" model="$(arg camera_model_front)">
         <!-- Required block to avoid "Not enough blocks" -->
         <gnss_origin />
     </xacro:zed_camera>
@@ -69,32 +73,28 @@
     <joint name="zed_front_mount_joint" type="fixed">
         <parent link="base_link"/>
         <child link="zed_front_camera_link"/>
-        <!-- TODO: set to your actual mount position -->
-        <origin xyz="0.450 0.00 0.680" rpy="0 0 0"/>
+        <!-- From box geometry: x=0.385-0.065479, y=0, z=0.125+0.217128; 30 deg incline -->
+        <origin xyz="0.319521 0.0 0.342128" rpy="0 -0.523599 0"/>
     </joint>
 
-    <!-- ------------------------------------------------------------------ -->
-    <!-- PLACEHOLDERS FOR FUTURE CAMERAS (disabled/commented by default)    -->
-    <!-- Keep commented until hardware and launch topics are ready.          -->
-    <!--
-    <xacro:zed_camera name="zed_left" model="zed2i">
+    <!-- Additional side cameras -->
+    <xacro:zed_camera name="zed_left" model="$(arg camera_model_left)">
         <gnss_origin />
     </xacro:zed_camera>
     <joint name="zed_left_mount_joint" type="fixed">
         <parent link="base_link"/>
         <child link="zed_left_camera_link"/>
-        <origin xyz="0.10 0.30 0.68" rpy="0 0 1.5708"/>
+        <origin xyz="0.3095 0.30232 0.21478" rpy="0 -0.523599 1.5708"/>
     </joint>
 
-    <xacro:zed_camera name="zed_right" model="zed2i">
+    <xacro:zed_camera name="zed_right" model="$(arg camera_model_right)">
         <gnss_origin />
     </xacro:zed_camera>
     <joint name="zed_right_mount_joint" type="fixed">
         <parent link="base_link"/>
         <child link="zed_right_camera_link"/>
-        <origin xyz="0.10 -0.30 0.68" rpy="0 0 -1.5708"/>
+        <origin xyz="0.3095 -0.30232 0.21478" rpy="0 -0.523599 -1.5708"/>
     </joint>
-    -->
 
 
     <!-- Front Left Wheel Link -->

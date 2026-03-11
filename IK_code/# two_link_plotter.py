@@ -34,18 +34,18 @@ JOY_H_AXIS = 3   # +1 left,  -1 right (ROS joy_node)
 JOY_V_AXIS = 4   # +1 up,    -1 down
 JOY_DEADZONE = 0.10
 
-MAX_EE_SPEED = 0.2         # m/s at full stick
-MAX_JOINT_DPS = 90.0       # per joint cap
-MAX_JOINT_RAD = math.radians(MAX_JOINT_DPS)
+BASE_MAX_EE_SPEED = 0.2      # m/s at full stick
+BASE_MAX_JOINT_DPS = 90.0    # per joint cap
+BASE_MAX_JOINT_RAD = math.radians(BASE_MAX_JOINT_DPS)
 
 # ----------------------------
 # Initialisation mode settings
 # ----------------------------
 INIT_TARGET_BASE_DEG = 30
 INIT_TARGET_ELBOW_DEG = 160
-INIT_KP = 2.0                 # proportional speed gain (dps per deg error)
-INIT_MAX_DPS = 5.0            # cap during init move
-INIT_TOL_DEG = 2.0            # finished when both joints within this tolerance
+INIT_KP = 2.0
+INIT_MAX_DPS = 5.0
+INIT_TOL_DEG = 2.0
 
 def clampf(v, lo, hi):
     return lo if v < lo else (hi if v > hi else v)
@@ -67,6 +67,29 @@ def project_velocity_at_boundary(px, py, vx, vy, tol=1e-4):
         vx -= vout * rx
         vy -= vout * ry
     return vx, vy
+
+def shape_axis(raw, deadzone, sensitivity):
+    """
+    Apply deadzone, normalize remaining stick range to 0..1,
+    then apply sensitivity shaping.
+    sensitivity = 1.0  -> linear
+    sensitivity > 1.0  -> more aggressive
+    sensitivity < 1.0  -> softer near centre
+    """
+    if abs(raw) < deadzone:
+        return 0.0
+
+    sign = 1.0 if raw >= 0.0 else -1.0
+    mag = (abs(raw) - deadzone) / (1.0 - deadzone)
+    mag = clampf(mag, 0.0, 1.0)
+
+    # exponential shaping
+    # 1.0 = linear
+    # >1 more sensitive away from centre
+    # <1 softer response
+    mag = mag ** (1.0 / max(0.05, sensitivity))
+
+    return sign * mag
 
 class ArmPlot(Node):
     def __init__(self):
@@ -90,10 +113,6 @@ class ArmPlot(Node):
         self.target_x = 0.4
         self.target_y = 0.0
 
-        # Runtime-adjustable control settings
-        self.ee_speed_scale = 1.0
-        self.joint_sensitivity_scale = 1.0
-
         # Control flags/timers
         self.has_sent_motion = False
         self.is_holding = False
@@ -102,6 +121,10 @@ class ArmPlot(Node):
 
         # Initialisation mode state
         self.initialising = False
+
+        # Runtime operator tuning
+        self.sensitivity = 1.0    # joystick shaping
+        self.speed_scale = 1.0    # overall motion speed multiplier
 
         # ROS I/O
         self.create_subscription(Float32, '/base_joint_deg',  self.cb_th1, 10)
@@ -114,10 +137,10 @@ class ArmPlot(Node):
         self.cur_elbow = 0.0
         self.tmp_base = 0.0
         self.tmp_elbow = 0.0
-        self.create_subscription(Float32, '/base_current_a', self.cb_base_i, 10)
+        self.create_subscription(Float32, '/base_current_a',  self.cb_base_i, 10)
         self.create_subscription(Float32, '/elbow_current_a', self.cb_elbow_i, 10)
-        self.create_subscription(Float32, '/base_temp_c',    self.cb_base_t, 10)
-        self.create_subscription(Float32, '/elbow_temp_c',   self.cb_elbow_t, 10)
+        self.create_subscription(Float32, '/base_temp_c',     self.cb_base_t, 10)
+        self.create_subscription(Float32, '/elbow_temp_c',    self.cb_elbow_t, 10)
 
         self.pub_v1 = self.create_publisher(Float32, '/cmd_joint1_speed_dps', 10)
         self.pub_v2 = self.create_publisher(Float32, '/cmd_joint2_speed_dps', 10)
@@ -125,7 +148,7 @@ class ArmPlot(Node):
 
         # Plot (arm)
         self.fig, self.ax = plt.subplots(figsize=(7, 7))
-        plt.subplots_adjust(bottom=0.30)  # extra room for button + sliders
+        plt.subplots_adjust(bottom=0.32)  # extra room for button + sliders
 
         self.ax.set_aspect('equal')
         r = L1 + L2
@@ -140,31 +163,33 @@ class ArmPlot(Node):
         )
 
         # Initialisation button
-        self.init_btn_ax = self.fig.add_axes([0.32, 0.16, 0.36, 0.08])
+        self.init_btn_ax = self.fig.add_axes([0.33, 0.18, 0.34, 0.06])
         self.init_button = Button(self.init_btn_ax, 'Initialisation Mode')
         self.init_button.on_clicked(self.on_init_button_clicked)
 
-        # Speed slider
-        self.speed_slider_ax = self.fig.add_axes([0.15, 0.08, 0.70, 0.03])
-        self.speed_slider = Slider(
-            self.speed_slider_ax,
-            'Speed',
-            0.1, 3.0,
-            valinit=1.0,
-            valstep=0.05
-        )
-        self.speed_slider.on_changed(self.on_speed_slider_changed)
-
         # Sensitivity slider
-        self.sens_slider_ax = self.fig.add_axes([0.15, 0.03, 0.70, 0.03])
+        self.sens_ax = self.fig.add_axes([0.18, 0.10, 0.64, 0.03])
         self.sens_slider = Slider(
-            self.sens_slider_ax,
-            'Sensitivity',
-            0.1, 3.0,
-            valinit=1.0,
+            ax=self.sens_ax,
+            label='Sensitivity',
+            valmin=0.3,
+            valmax=3.0,
+            valinit=self.sensitivity,
             valstep=0.05
         )
-        self.sens_slider.on_changed(self.on_sensitivity_slider_changed)
+        self.sens_slider.on_changed(self.on_sensitivity_changed)
+
+        # Speed slider
+        self.speed_ax = self.fig.add_axes([0.18, 0.05, 0.64, 0.03])
+        self.speed_slider = Slider(
+            ax=self.speed_ax,
+            label='Speed',
+            valmin=0.2,
+            valmax=2.5,
+            valinit=self.speed_scale,
+            valstep=0.05
+        )
+        self.speed_slider.on_changed(self.on_speed_changed)
 
         plt.ion()
         plt.show(block=False)
@@ -225,37 +250,27 @@ class ArmPlot(Node):
         self.target_y = y1 + L2 * math.sin(t1 + t2)
 
     # ---------------- Slider callbacks ----------------
-    def on_speed_slider_changed(self, val):
-        self.ee_speed_scale = float(val)
+    def on_sensitivity_changed(self, val):
+        self.sensitivity = float(val)
 
-    def on_sensitivity_slider_changed(self, val):
-        self.joint_sensitivity_scale = float(val)
+    def on_speed_changed(self, val):
+        self.speed_scale = float(val)
 
     # ---------------- Callbacks ----------------
     def cb_th1(self, msg: Float32):
-        # Raw from Teensy
         self.raw_th1_deg = msg.data
-
-        # Python-only zeroing:
-        # first received base angle becomes 0 deg
         if self.base_zero_deg is None:
             self.base_zero_deg = msg.data
             self.get_logger().info(f'Base zero captured at {self.base_zero_deg:.2f} deg')
-
         self.th1_deg = self.raw_th1_deg - self.base_zero_deg
 
     def cb_th2(self, msg: Float32):
-        # Raw from Teensy
         self.raw_th2_deg = msg.data
-
-        # Python-only zeroing:
-        # first received elbow angle becomes 180 deg in the local IK frame
         if self.elbow_zero_deg is None:
             self.elbow_zero_deg = msg.data
             self.get_logger().info(
                 f'Elbow zero captured at {self.elbow_zero_deg:.2f} deg -> mapped to 180 deg'
             )
-
         self.th2_deg = (self.raw_th2_deg - self.elbow_zero_deg) + 180.0
 
     def cb_ee(self, msg: Point):
@@ -286,11 +301,9 @@ class ArmPlot(Node):
 
         now = time.time()
 
-        # Error in local Python-zeroed joint frame
         err1 = INIT_TARGET_BASE_DEG - self.th1_deg
         err2 = INIT_TARGET_ELBOW_DEG - self.th2_deg
 
-        # Done?
         if abs(err1) <= INIT_TOL_DEG and abs(err2) <= INIT_TOL_DEG:
             self._pub_joint_speeds(0.0, 0.0, now)
             self._publish_hold_current_pose()
@@ -299,11 +312,9 @@ class ArmPlot(Node):
             self.get_logger().info('Initialisation mode complete.')
             return
 
-        # Simple proportional speed controller
         v1 = clampf(INIT_KP * err1, -INIT_MAX_DPS, INIT_MAX_DPS)
         v2 = clampf(INIT_KP * err2, -INIT_MAX_DPS, INIT_MAX_DPS)
 
-        # Prevent tiny jitter near target
         if abs(err1) <= INIT_TOL_DEG:
             v1 = 0.0
         if abs(err2) <= INIT_TOL_DEG:
@@ -312,15 +323,12 @@ class ArmPlot(Node):
         self._pub_joint_speeds(v1, v2, now)
 
     def cb_joy(self, joy: Joy):
-        # Ignore joystick IK motion while initialising
         if self.initialising:
             return
 
-        # Guard against early empty arrays from joy_node
         if len(joy.axes) <= max(JOY_H_AXIS, JOY_V_AXIS):
             return
 
-        # Wait until Python zero has been captured
         if self.base_zero_deg is None or self.elbow_zero_deg is None:
             return
 
@@ -331,24 +339,27 @@ class ArmPlot(Node):
         self.last_joy_time = now
         dt = min(dt, 1.0/15.0)
 
-        # Right stick
-        h_raw = -1.0 * joy.axes[JOY_H_AXIS]  # +1 left -> -x
-        v_raw =  joy.axes[JOY_V_AXIS]        # +1 up   -> +y
-
-        moving = (abs(h_raw) >= JOY_DEADZONE) or (abs(v_raw) >= JOY_DEADZONE)
-
         # Current Python-zeroed joint angles (radians)
         t1 = math.radians(self.th1_deg)
         t2 = math.radians(self.th2_deg)
 
+        # Raw stick
+        h_raw = -1.0 * joy.axes[JOY_H_AXIS]
+        v_raw =  joy.axes[JOY_V_AXIS]
+
+        # Shaped stick using runtime sensitivity
+        h = shape_axis(h_raw, JOY_DEADZONE, self.sensitivity)
+        v = shape_axis(v_raw, JOY_DEADZONE, self.sensitivity)
+
+        moving = (abs(h) > 1e-6) or (abs(v) > 1e-6)
+
         if moving:
-            h = 0.0 if abs(h_raw) < JOY_DEADZONE else h_raw
-            v = 0.0 if abs(v_raw) < JOY_DEADZONE else v_raw
+            max_ee_speed = BASE_MAX_EE_SPEED * self.speed_scale
+            max_joint_rad = BASE_MAX_JOINT_RAD * self.speed_scale
 
             # Map stick -> EE velocity
-            current_ee_speed = MAX_EE_SPEED * self.ee_speed_scale
-            vx = -h * current_ee_speed
-            vy =  v * current_ee_speed
+            vx = -h * max_ee_speed
+            vy =  v * max_ee_speed
 
             vx, vy = project_velocity_at_boundary(self.target_x, self.target_y, vx, vy)
 
@@ -357,7 +368,7 @@ class ArmPlot(Node):
             self.target_y += vy * dt
             self.target_x, self.target_y = clamp_outer(self.target_x, self.target_y)
 
-            # Jacobian inverse -> joint rates (IK sign; CCW+)
+            # Jacobian inverse -> joint rates
             s1, c1 = math.sin(t1), math.cos(t1)
             s12, c12 = math.sin(t1 + t2), math.cos(t1 + t2)
             a = -(L1*s1 + L2*s12); b = -L2*s12
@@ -371,28 +382,19 @@ class ArmPlot(Node):
                 vth1 =  ( d*vx - b*vy) * inv
                 vth2 = (-c*vx + a*vy) * inv
 
-            # Reverse joystick direction of bottom motor (joint 1 / base)
-            vth1 = -vth1
+            # Rate limits
+            vth1 = clampf(vth1, -max_joint_rad, max_joint_rad)
+            vth2 = clampf(vth2, -max_joint_rad, max_joint_rad)
 
-            # Rate limits using sensitivity slider
-            current_joint_rad_limit = math.radians(MAX_JOINT_DPS * self.joint_sensitivity_scale)
-            vth1 = clampf(vth1, -current_joint_rad_limit, current_joint_rad_limit)
-            vth2 = clampf(vth2, -current_joint_rad_limit, current_joint_rad_limit)
-
-            # Publish at ~50 Hz max
             self._pub_joint_speeds(math.degrees(vth1), math.degrees(vth2), now)
             self.has_sent_motion = True
             self.is_holding = False
 
         else:
-            # Deadzone: send one-shot HOLD after we’ve moved at least once
             if self.has_sent_motion and not self.is_holding:
                 self._publish_hold_current_pose()
 
-            # Keep target_x/y coherent with current pose when idle
             self._sync_target_to_current_pose()
-
-            # Zero-speed heartbeat
             self._pub_joint_speeds(0.0, 0.0, now)
 
     # ---------------- UI ----------------
@@ -413,8 +415,8 @@ class ArmPlot(Node):
             f"Raw θ1={self.raw_th1_deg:.1f}°, Raw θ2={self.raw_th2_deg:.1f}°\n"
             f"EE: ({self.ee.x:.3f}, {self.ee.y:.3f}) m\n"
             f"Init mode: {init_state}\n"
-            f"Speed scale: {self.ee_speed_scale:.2f}\n"
-            f"Sensitivity scale: {self.joint_sensitivity_scale:.2f}"
+            f"Sensitivity: {self.sensitivity:.2f}\n"
+            f"Speed scale: {self.speed_scale:.2f}"
         )
 
         self.fig.canvas.draw_idle()
