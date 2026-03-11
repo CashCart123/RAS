@@ -7,8 +7,7 @@ General Responsibilities:
 - Integrate and tune new camera sources in `ekf_fusion.yaml`
 - Validate/tune all sensor frame transforms against measured hardware
 - Runtime validation of wheel joint-state source (`/joint_states` vs `/wheel_ticks` path)
-- teensy reset
-- launch arm
+- indicator for emag
     sshpass -p 'RASunsw' ssh -tt -o StrictHostKeyChecking=no marvin_v2@192.168.1.80
 
 ### Ben
