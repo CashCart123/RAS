@@ -35,8 +35,8 @@ void error_loop(){ while(1){ delay(100); } }
 //---------------------
 
 //================ USER CONFIG =================
-#define JOINT1_ID 0x142      // shoulder/base motor CAN ID
-#define JOINT2_ID 0x141      // elbow/top motor CAN ID
+#define JOINT1_ID 0x145     // shoulder/base motor CAN ID
+#define JOINT2_ID 0x144    // elbow/top motor CAN ID
 
 // Geometry
 static const float L1 = 0.5f, L2 = 0.5f;
@@ -134,24 +134,40 @@ static inline float driveAngle_to_ik_deg(uint32_t can_id, int32_t angle_x100){
 }
 
 /* ---------------- CAN: read absolute angle (0.01°) ---------------- */
-static bool read_angle_0x92(uint32_t id, int32_t &angle_x100){
+/* ---------------- CAN: read absolute angle (0.01°) ----------------
+   Keeps retrying until the requested motor replies.
+   resend_period_ms: how often to send another 0x92 request
+*/
+static bool read_angle_0x92(uint32_t id, int32_t &angle_x100, uint16_t resend_period_ms = 20){
   byte tx[8] = {0x92,0,0,0,0,0,0,0};
-  CAN0.sendMsgBuf(id, 0, 8, tx);
-  unsigned long t0 = millis();
-  while (millis() - t0 < 60) {
+  unsigned long last_send = 0;
+
+  while (true) {
+    unsigned long now = millis();
+
+    // Re-send request periodically until we get a valid response
+    if ((now - last_send) >= resend_period_ms) {
+      CAN0.sendMsgBuf(id, 0, 8, tx);
+      last_send = now;
+    }
+
     if (CAN0.checkReceive() == CAN_MSGAVAIL) {
-      unsigned long rxId; byte len; byte rx[8];
+      unsigned long rxId;
+      byte len;
+      byte rx[8];
       CAN0.readMsgBuf(&rxId, &len, rx);
+
       if ((uint32_t)rxId == (id + 0x100) && len >= 8 && rx[0] == 0x92) {
         angle_x100 = (int32_t)((uint32_t)rx[4] |
-                               ((uint32_t)rx[5]<<8) |
-                               ((uint32_t)rx[6]<<16) |
-                               ((uint32_t)rx[7]<<24));
+                               ((uint32_t)rx[5] << 8) |
+                               ((uint32_t)rx[6] << 16) |
+                               ((uint32_t)rx[7] << 24));
         return true;
       }
     }
+
+    delay(1);  // avoid hammering the CPU/bus flat out
   }
-  return false;
 }
 
 /* ---------------- CAN: read Motor Status 2 (0x9C) ----------------
@@ -427,4 +443,3 @@ void loop() {
     digitalWrite(LED_PIN, HIGH);
   }
 }
-
