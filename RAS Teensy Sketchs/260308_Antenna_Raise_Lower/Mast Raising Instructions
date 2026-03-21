@@ -1,0 +1,54 @@
+Launch Rover Mast
+
+After launching rover using cool, easy method, open 2x new terminals
+
+ssh into both terminals with 
+ssh marvin_v2@192.168.1.80
+
+In run terminal, run:
+stty -F /dev/ttyUSB0 115200 raw -echo -echoe -echok
+
+This sets up the port
+
+To raise:
+printf "raise\n" > /dev/ttyUSB0
+
+To lower:
+printf "lower\n" > /dev/ttyUSB0
+
+To stow:
+printf "stow\n" > /dev/ttyUSB0
+
+In the second terminal, run the second script for optional debugging outputs:
+cat /dev/ttyUSB0
+
+You will get an output like this: 
+MAST CONTROLLER STARTING
+Available commands: raise, lower, stow, status
+OK: mast LOWERED (servo angle 0)
+STATUS: LOWERED, LED=OFF, angle=0
+CMD: raise
+OK: mast RAISED (servo angle 100)
+CMD: stow
+OK: mast STOWED (servo angle 30)
+CMD: raise
+OK: mast RAISED (servo angle 100)
+CMD: stow
+OK: mast STOWED (servo angle 30)
+CMD: raise
+OK: mast RAISED (servo angle 100)
+CMD: raise
+OK: already RAISED
+CMD: stow
+OK: mast STOWED (servo angle 30)
+CMD: raise
+OK: mast RAISED (servo angle 100)
+
+
+Debugging:
+Make sure servo is plugged into J3
+
+Mosfets overheat. Beware!
+
+Port may change from USB0, however it will always be a USB* port. Run ls /dev/ttyUSB*
+to check

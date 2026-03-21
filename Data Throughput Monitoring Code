@@ -1,0 +1,9 @@
+Run at start
+cat /sys/class/net/eno1/statistics/tx_bytes
+cat /sys/class/net/eno1/statistics/rx_bytes
+
+Run at end
+cat /sys/class/net/eno1/statistics/tx_bytes
+cat /sys/class/net/eno1/statistics/rx_bytes
+
+Calc difference between tx and rx between start and finish. Measures total amount of data that goes over the ethernet port. 

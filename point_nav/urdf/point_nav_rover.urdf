@@ -82,14 +82,14 @@
     </visual>
   </link>
 
-  <!-- Camera frames for pose/odom sensors -->
+  <!-- Camera frames for pose/odom sensors
   <joint name="zed_front_mount_joint" type="fixed">
     <parent link="base_link"/>
     <child link="zed_front_camera_link"/>
-    <!-- From box geometry: x=0.385-0.065479, y=0, z=0.125+0.217128; 30 deg incline -->
+    From box geometry: x=0.385-0.065479, y=0, z=0.125+0.217128; 30 deg incline
     <origin xyz="0.319521 0.0 0.342128" rpy="0 -0.523599 0"/>
   </joint>
-  <link name="zed_front_camera_link"/>
+  <link name="zed_front_camera_link"/> -->
 
   <joint name="zed_rear_mount_joint" type="fixed">
     <parent link="base_link"/>

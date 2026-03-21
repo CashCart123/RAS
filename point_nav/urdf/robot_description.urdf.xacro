@@ -63,20 +63,20 @@
         <material>Gazebo/Blue</material>
     </gazebo>
 
-    <!-- ZED 2i camera instance (minimal) -->
+    <!-- ZED 2i camera instance (minimal)
     <xacro:zed_camera name="zed_front" model="$(arg camera_model_front)">
-        <!-- Required block to avoid "Not enough blocks" -->
+        Required block to avoid "Not enough blocks"
         <gnss_origin />
     </xacro:zed_camera>
 
-    <!-- Mount the ZED to the rover -->
+    Mount the ZED to the rover
     <joint name="zed_front_mount_joint" type="fixed">
         <parent link="base_link"/>
         <child link="zed_front_camera_link"/>
-        <!-- From box geometry: x=0.385-0.065479, y=0, z=0.125+0.217128; 30 deg incline -->
+        From box geometry: x=0.385-0.065479, y=0, z=0.125+0.217128; 30 deg incline
         <origin xyz="0.319521 0.0 0.342128" rpy="0 -0.523599 0"/>
     </joint>
-
+ -->
     <!-- Additional side cameras -->
     <xacro:zed_camera name="zed_left" model="$(arg camera_model_left)">
         <gnss_origin />
