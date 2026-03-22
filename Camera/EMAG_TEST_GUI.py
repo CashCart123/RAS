@@ -6,46 +6,33 @@ import pygame
 import os
 import time
 import math
-import subprocess  # <-- Added for SSH commands
 
 # --- FAILSAFE: Import ROS and Armik ---
 try:
     import rclpy
-    import armik_og
+    from rclpy.node import Node
+    import armik
+    from std_msgs.msg import Bool
     ROS_AVAILABLE = True
 except ImportError as e:
-    print(f"[CRITICAL] ROS2 or armik_og.py not found. Arm simulation disabled. Reason: {e}")
+    print(f"[CRITICAL] ROS2 or armik.py not found. Arm simulation disabled. Reason: {e}")
     ROS_AVAILABLE = False
 
 CONFIG_PATH = 'camera_gui_config.json'
 LOGO_PATH = 'logo.png'
-ROVER_NAME = "UNSW RAS" 
+ROVER_NAME = "UNSW RAS"
 
 BUTTON_SIZE = 32
 PADDING = 10
 SCALES = [1.0, 0.5, 0.25, 0.1]
 SCALE_LABELS = ["100%", "50%", "25%", "10%"]
 
-HEADER_HEIGHT = 75 
+HEADER_HEIGHT = 75
 FOOTER_HEIGHT = 40
 
-# --- MAST CONFIGURATION ---
-MAST_USER = "marvin_v2"
-MAST_IP = "192.168.1.80"
-MAST_PORT = "/dev/ttyUSB0" 
+EMAG_STATE = False
+EMAG_LAST_UPDATE = 0.0
 
-def setup_mast_port():
-    print(f"[INFO] Initializing Mast Port on {MAST_IP}...")
-    cmd = f"ssh {MAST_USER}@{MAST_IP} 'stty -F {MAST_PORT} 115200 raw -echo -echoe -echok'"
-    threading.Thread(target=lambda: subprocess.run(cmd, shell=True), daemon=True).start()
-
-def send_mast_cmd(action):
-    print(f"[MAST] Sending command: {action}")
-    cmd = f"ssh {MAST_USER}@{MAST_IP} 'printf \"{action}\\n\" > {MAST_PORT}'"
-    threading.Thread(target=lambda: subprocess.run(cmd, shell=True), daemon=True).start()
-
-# Initialize the mast port when the script starts
-setup_mast_port()
 
 class CameraHandler:
     def __init__(self, index, url):
@@ -54,11 +41,11 @@ class CameraHandler:
         self.active = True
         self.scale_idx = 0
         self.frame = None
-        self.latest_raw_frame = None  
+        self.latest_raw_frame = None
         self.cap = None
         self.stop_event = threading.Event()
-        self.flash_timer = 0  
-        
+        self.flash_timer = 0
+
         self.rect = pygame.Rect(0, 0, 0, 0)
         self.btn_power_rect = pygame.Rect(0, 0, 0, 0)
         self.btn_res_rect = pygame.Rect(0, 0, 0, 0)
@@ -73,9 +60,7 @@ class CameraHandler:
     def _capture_loop(self):
         time.sleep(self.index * 3.0)
         source = int(self.url) if self.url.isdigit() else self.url
-        
-        # --- NEW FIX: Recognize both RTSP and HTTP as network streams ---
-        is_network = isinstance(source, str) and (source.startswith("rtsp") or source.startswith("http"))
+        is_rtsp = isinstance(source, str) and source.startswith("rtsp")
 
         while not self.stop_event.is_set():
             if not self.active:
@@ -84,17 +69,16 @@ class CameraHandler:
 
             try:
                 if self.cap is None or not self.cap.isOpened():
-                    # Use CAP_ANY for network streams, CAP_V4L2 only for local USB hardware
-                    backend = cv2.CAP_FFMPEG if is_network else cv2.CAP_V4L2
+                    backend = cv2.CAP_V4L2 if not is_rtsp else cv2.CAP_ANY
                     self.cap = cv2.VideoCapture(source, backend)
-                    print(f"[DEBUG] Camera {self.index} ({source}) Opened: {self.cap.isOpened()}")
-                    
-                    if not is_network:
+
+                    if not is_rtsp:
                         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
                         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
                         self.cap.set(cv2.CAP_PROP_FPS, 30)
-                    time.sleep(1.0) 
+
+                    time.sleep(1.0)
 
                 if self.cap.isOpened():
                     ret, frame = self.cap.read()
@@ -112,6 +96,7 @@ class CameraHandler:
                         self.frame = pygame.surfarray.make_surface(frame)
                     else:
                         self.cap.release()
+                        self.cap = None
                         self.frame = None
                         self.latest_raw_frame = None
                         time.sleep(2.0)
@@ -120,8 +105,10 @@ class CameraHandler:
                     self.latest_raw_frame = None
                     time.sleep(2.0)
 
-            except Exception as e:
-                if self.cap: self.cap.release()
+            except Exception:
+                if self.cap:
+                    self.cap.release()
+                self.cap = None
                 self.frame = None
                 self.latest_raw_frame = None
                 time.sleep(2.0)
@@ -129,9 +116,9 @@ class CameraHandler:
     def draw(self, surface, tile_rect, font):
         self.rect = tile_rect
         x, y, w, h = tile_rect
-        
+
         pygame.draw.rect(surface, (15, 18, 22), tile_rect)
-        
+
         if self.flash_timer > 0:
             pygame.draw.rect(surface, (255, 255, 255), tile_rect, 4)
             self.flash_timer -= 1
@@ -141,73 +128,111 @@ class CameraHandler:
         if self.active and self.frame:
             img_w, img_h = self.frame.get_size()
             aspect_ratio = img_w / img_h
+
             if w / h > aspect_ratio:
                 new_h = h
                 new_w = int(h * aspect_ratio)
             else:
                 new_w = w
                 new_h = int(w / aspect_ratio)
-                
+
             offset_x = x + (w - new_w) // 2
             offset_y = y + (h - new_h) // 2
-            
+
             scaled_frame = pygame.transform.scale(self.frame, (new_w, new_h))
             surface.blit(scaled_frame, (offset_x, offset_y))
+
             hud_txt = font.render(f"RAW STREAM: {img_w}x{img_h}", True, (0, 255, 100))
             surface.blit(hud_txt, (x + 10, y + h - 25))
         else:
             txt = font.render(f"CAMERA {self.index} OFFLINE", True, (100, 105, 115))
-            txt_rect = txt.get_rect(center=(x + w//2, y + h//2))
+            txt_rect = txt.get_rect(center=(x + w // 2, y + h // 2))
             surface.blit(txt, txt_rect)
 
         self.btn_power_rect = pygame.Rect(x + w - BUTTON_SIZE - PADDING, y + PADDING, BUTTON_SIZE, BUTTON_SIZE)
         p_color = (46, 204, 113) if self.active else (231, 76, 60)
         pygame.draw.rect(surface, p_color, self.btn_power_rect, border_radius=6)
-        
-        self.btn_res_rect = pygame.Rect(x + w - (BUTTON_SIZE*2) - (PADDING*2), y + PADDING, BUTTON_SIZE, BUTTON_SIZE)
+
+        self.btn_res_rect = pygame.Rect(x + w - (BUTTON_SIZE * 2) - (PADDING * 2), y + PADDING, BUTTON_SIZE, BUTTON_SIZE)
         pygame.draw.rect(surface, (52, 152, 219), self.btn_res_rect, border_radius=6)
         res_txt = font.render(SCALE_LABELS[self.scale_idx], True, (255, 255, 255))
         surface.blit(res_txt, res_txt.get_rect(center=self.btn_res_rect.center))
 
-        self.btn_snap_rect = pygame.Rect(x + w - (BUTTON_SIZE*3) - (PADDING*3), y + PADDING, BUTTON_SIZE, BUTTON_SIZE)
+        self.btn_snap_rect = pygame.Rect(x + w - (BUTTON_SIZE * 3) - (PADDING * 3), y + PADDING, BUTTON_SIZE, BUTTON_SIZE)
         pygame.draw.rect(surface, (155, 89, 182), self.btn_snap_rect, border_radius=6)
         snap_txt = font.render("O", True, (255, 255, 255))
         surface.blit(snap_txt, snap_txt.get_rect(center=self.btn_snap_rect.center))
 
+
 def get_smart_grid(count, sw, sh, start_y):
-    if count == 0: return []
-    if count <= 2: rows = 1
-    elif count <= 6: rows = 2
-    else: rows = 3
-    
-    rh = sh // rows 
+    if count == 0:
+        return []
+
+    if count <= 2:
+        rows = 1
+    elif count <= 6:
+        rows = 2
+    else:
+        rows = 3
+
+    rh = sh // rows
     rects = []
     base_per_row = count // rows
     extras = count % rows
-    
+
     for r in range(rows):
         cams_in_row = base_per_row + (1 if r >= rows - extras else 0)
         rw = sw // cams_in_row
         for c in range(cams_in_row):
             rects.append(pygame.Rect(c * rw, start_y + (r * rh), rw, rh))
+
     return rects
+
 
 def save_current_layout(handlers):
     out_data = {"cameras": [{"url": cam.url} for cam in handlers]}
     with open(CONFIG_PATH, 'w') as f:
         json.dump(out_data, f, indent=4)
 
+
+class EmagStateSubscriber(Node):
+    def __init__(self):
+        super().__init__('camera_gui_emag_listener')
+        self.subscription = self.create_subscription(
+            Bool,
+            '/emag_state',
+            self.listener_callback,
+            10
+        )
+
+    def listener_callback(self, msg):
+        global EMAG_STATE, EMAG_LAST_UPDATE
+        EMAG_STATE = bool(msg.data)
+        EMAG_LAST_UPDATE = time.time()
+
+
 arm_node = None
+emag_node = None
+
 if ROS_AVAILABLE:
     try:
         rclpy.init()
-        arm_node = armik_og.ArmPlot()
-        ros_thread = threading.Thread(target=rclpy.spin, args=(arm_node,), daemon=True)
-        ros_thread.start()
+
+        arm_node = armik.ArmPlot()
+        emag_node = EmagStateSubscriber()
+
+        arm_ros_thread = threading.Thread(target=rclpy.spin, args=(arm_node,), daemon=True)
+        emag_ros_thread = threading.Thread(target=rclpy.spin, args=(emag_node,), daemon=True)
+
+        arm_ros_thread.start()
+        emag_ros_thread.start()
+
         print("[SUCCESS] Physical Arm simulation node initialized.")
+        print("[SUCCESS] EMAG state subscriber initialized.")
     except Exception as e:
         print(f"[FAILSAFE] Error starting ROS node: {e}")
         arm_node = None
+        emag_node = None
 
 # --- Main App ---
 pygame.init()
@@ -225,22 +250,24 @@ if os.path.exists(LOGO_PATH):
     try:
         raw_logo = pygame.image.load(LOGO_PATH).convert_alpha()
         logo_aspect = raw_logo.get_width() / raw_logo.get_height()
-        target_h = HEADER_HEIGHT - 12 
+        target_h = HEADER_HEIGHT - 12
         logo_w = int(target_h * logo_aspect)
         logo_img = pygame.transform.smoothscale(raw_logo, (logo_w, target_h))
-    except Exception as e:
+    except Exception:
         pass
 
 if os.path.exists(CONFIG_PATH):
     with open(CONFIG_PATH, 'r') as f:
         urls = [c['url'] for c in json.load(f)['cameras']]
 else:
-    urls = [ 'rtsp:/ras:ras@192.168.1.247:554/stream0',
+    urls = [
+        'rtsp:/ras:ras@192.168.1.247:554/stream0',
         'rtsp:/ras:ras@192.168.1.6:554/stream0',
         'rtsp:/ras:ras@192.168.1.250:554/stream0',
+        # 'rtsp:/ras:ras@192.168.1.19:8554/stream0',
         'rtsp:/ras:ras@192.168.1.11:554/stream0',
-        'rtsp:/ras:ras@192.168.1.22:8554/stream0',
-        'http://192.168.1.80:9091/stream'] 
+        'rtsp:/ras:ras@192.168.1.22:8554/stream0'
+    ]
 
 camera_handlers = [CameraHandler(i, url) for i, url in enumerate(urls)]
 fullscreen_cam = None
@@ -250,16 +277,10 @@ drag_cam_idx = None
 is_dragging = False
 
 show_arm_panel = False
-panel_width_ratio = 0.20  
+panel_width_ratio = 0.20
 
 btn_toggle_arm_rect = pygame.Rect(0, 0, 0, 0)
 btn_init_rect = pygame.Rect(0, 0, 0, 0)
-
-# --- Rectangles for Mast Buttons ---
-btn_mast_raise = pygame.Rect(0, 0, 0, 0)
-btn_mast_stow = pygame.Rect(0, 0, 0, 0)
-btn_mast_lower = pygame.Rect(0, 0, 0, 0)
-
 active_slider = None
 
 running = True
@@ -267,7 +288,7 @@ while running:
     sw, sh = screen.get_size()
     screen.fill((10, 12, 15))
     mouse_pos = pygame.mouse.get_pos()
-    
+
     view_y = HEADER_HEIGHT
     view_h = sh - HEADER_HEIGHT - FOOTER_HEIGHT
 
@@ -275,10 +296,10 @@ while running:
         camera_area_width = int(sw * (1.0 - panel_width_ratio))
     else:
         camera_area_width = sw
-        
+
     arm_panel_x = camera_area_width
     arm_panel_width = sw - camera_area_width
-    
+
     if fullscreen_cam is not None:
         grid = [pygame.Rect(0, view_y, camera_area_width, view_h)]
         active_cams = [fullscreen_cam]
@@ -289,42 +310,32 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-            
+
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             clicked_on_ui = False
-            
+
             if btn_toggle_arm_rect.collidepoint(event.pos) and arm_node is not None:
                 show_arm_panel = not show_arm_panel
                 clicked_on_ui = True
-                
-            # --- NEW: MAST BUTTON COLLISIONS ---
-            elif btn_mast_raise.collidepoint(event.pos):
-                send_mast_cmd("raise")
-                clicked_on_ui = True
-            elif btn_mast_stow.collidepoint(event.pos):
-                send_mast_cmd("stow")
-                clicked_on_ui = True
-            elif btn_mast_lower.collidepoint(event.pos):
-                send_mast_cmd("lower")
-                clicked_on_ui = True
 
-            elif show_arm_panel:
+            elif show_arm_panel and arm_node is not None:
                 if btn_init_rect.collidepoint(event.pos):
                     arm_node.trigger_initialisation()
                     clicked_on_ui = True
                 else:
-                    plot_area_h = view_h - 150 
+                    plot_area_h = view_h - 150
                     ui_y = view_y + plot_area_h + 10
+
                     tr_w = arm_panel_width - 40
                     tr_x = arm_panel_x + 20
-                    
-                    if pygame.Rect(tr_x - 10, ui_y + 60 - 15, tr_w + 20, 30).collidepoint(event.pos):
+
+                    if pygame.Rect(tr_x - 10, ui_y + 100 - 15, tr_w + 20, 30).collidepoint(event.pos):
                         active_slider = "speed"
                         clicked_on_ui = True
-                    elif pygame.Rect(tr_x - 10, ui_y + 100 - 15, tr_w + 20, 30).collidepoint(event.pos):
+                    elif pygame.Rect(tr_x - 10, ui_y + 140 - 15, tr_w + 20, 30).collidepoint(event.pos):
                         active_slider = "sens"
                         clicked_on_ui = True
-                        
+
             if not clicked_on_ui:
                 for i, cam in enumerate(active_cams):
                     if cam.btn_power_rect.collidepoint(event.pos):
@@ -341,11 +352,11 @@ while running:
                             ts = time.strftime("%Y%m%d_%H%M%S")
                             filename = f"captures/cam_{cam.index}_{ts}.jpg"
                             cv2.imwrite(filename, cam.latest_raw_frame)
-                            cam.flash_timer = 5  
+                            cam.flash_timer = 5
                             print(f"[INFO] Snapshot saved: {filename}")
                         clicked_on_ui = True
                         break
-            
+
             if not clicked_on_ui:
                 for i, cam in enumerate(active_cams):
                     if cam.rect.collidepoint(event.pos):
@@ -355,30 +366,33 @@ while running:
                         break
 
         elif event.type == pygame.MOUSEMOTION:
-            if active_slider and show_arm_panel:
+            if active_slider and show_arm_panel and arm_node is not None:
                 tr_w = arm_panel_width - 40
                 tr_x = arm_panel_x + 20
                 clamped_x = max(tr_x, min(event.pos[0], tr_x + tr_w))
                 val = 0.1 + ((clamped_x - tr_x) / tr_w) * (3.0 - 0.1)
+
                 if active_slider == "speed":
                     arm_node.ee_speed_scale = val
                 elif active_slider == "sens":
                     arm_node.joint_sensitivity_scale = val
 
             elif drag_start_pos is not None and fullscreen_cam is None:
-                dx, dy = event.pos[0] - drag_start_pos[0], event.pos[1] - drag_start_pos[1]
+                dx = event.pos[0] - drag_start_pos[0]
+                dy = event.pos[1] - drag_start_pos[1]
                 if math.hypot(dx, dy) > 10:
                     is_dragging = True
 
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-            active_slider = None 
-            
+            active_slider = None
+
             if is_dragging and drag_cam_idx is not None and fullscreen_cam is None:
                 drop_target_idx = None
                 for i, cam in enumerate(active_cams):
                     if cam.rect.collidepoint(event.pos):
                         drop_target_idx = i
                         break
+
                 if drop_target_idx is not None and drop_target_idx != drag_cam_idx:
                     active_cams[drag_cam_idx], active_cams[drop_target_idx] = active_cams[drop_target_idx], active_cams[drag_cam_idx]
                     active_cams[drag_cam_idx].index = drag_cam_idx
@@ -399,18 +413,18 @@ while running:
     for i, cam in enumerate(active_cams):
         if i < len(grid):
             cam.draw(screen, grid[i], ui_font)
-            
+
     if show_arm_panel and arm_node is not None:
         pygame.draw.rect(screen, (26, 28, 35), (arm_panel_x, view_y, arm_panel_width, view_h))
         pygame.draw.line(screen, (50, 55, 65), (arm_panel_x, view_y), (arm_panel_x, sh - FOOTER_HEIGHT), 2)
 
-        plot_area_h = view_h - 150 
+        plot_area_h = view_h - 150
 
         try:
             with arm_node.buffer_lock:
                 arm_frame_data = arm_node.latest_arm_frame
                 tele_frame_data = arm_node.latest_telemetry_frame
-            
+
             if arm_frame_data:
                 raw_data, size = arm_frame_data
                 arm_surf = pygame.image.frombuffer(raw_data, size, "RGBA")
@@ -422,15 +436,37 @@ while running:
                 tele_surf = pygame.image.frombuffer(raw_data, size, "RGBA")
                 tele_surf = pygame.transform.smoothscale(tele_surf, (arm_panel_width - 20, (plot_area_h // 2) - 10))
                 screen.blit(tele_surf, (arm_panel_x + 10, view_y + (plot_area_h // 2) + 10))
-        except Exception as e:
+        except Exception:
             pass
-            
+
         ui_y = view_y + plot_area_h + 10
+
+        # --- Init button ---
         btn_init_rect = pygame.Rect(arm_panel_x + 20, ui_y, arm_panel_width - 40, 30)
         btn_color = (46, 204, 113) if arm_node.initialising else (231, 76, 60)
         pygame.draw.rect(screen, btn_color, btn_init_rect, border_radius=4)
         init_txt = ui_font.render("RUN INITIALISATION", True, (255, 255, 255))
         screen.blit(init_txt, init_txt.get_rect(center=btn_init_rect.center))
+
+        # --- EMAG indicator inside arm panel ---
+        emag_y = ui_y + 40
+        emag_stale = (time.time() - EMAG_LAST_UPDATE) > 1.0
+
+        if emag_stale:
+            emag_label = "EMAG: --"
+            emag_color = (120, 120, 120)
+        elif EMAG_STATE:
+            emag_label = "EMAG: ON"
+            emag_color = (46, 204, 113)
+        else:
+            emag_label = "EMAG: OFF"
+            emag_color = (231, 76, 60)
+
+        emag_rect = pygame.Rect(arm_panel_x + 20, emag_y, arm_panel_width - 40, 28)
+        pygame.draw.rect(screen, emag_color, emag_rect, border_radius=6)
+
+        emag_txt = ui_font.render(emag_label, True, (255, 255, 255))
+        screen.blit(emag_txt, emag_txt.get_rect(center=emag_rect.center))
 
         def draw_slider(name, val, y_offset):
             tr_w = arm_panel_width - 40
@@ -441,52 +477,23 @@ while running:
             lbl = ui_font.render(f"{name}: {val:.2f}", True, (200, 200, 200))
             screen.blit(lbl, (tr_x, ui_y + y_offset - 20))
 
-        draw_slider("Speed", arm_node.ee_speed_scale, 60)
-        draw_slider("Sens", arm_node.joint_sensitivity_scale, 100)
+        draw_slider("Speed", arm_node.ee_speed_scale, 100)
+        draw_slider("Sens", arm_node.joint_sensitivity_scale, 140)
 
-    pygame.draw.rect(screen, (138, 43, 226), (0, 0, sw, HEADER_HEIGHT)) 
-    pygame.draw.line(screen, (255, 255, 255), (0, HEADER_HEIGHT-1), (sw, HEADER_HEIGHT-1), 3) 
-    
+    pygame.draw.rect(screen, (138, 43, 226), (0, 0, sw, HEADER_HEIGHT))
+    pygame.draw.line(screen, (255, 255, 255), (0, HEADER_HEIGHT - 1), (sw, HEADER_HEIGHT - 1), 3)
+
     title_txt = header_font.render("MARVIN GCS", True, (255, 255, 255))
     title_rect = title_txt.get_rect(center=(sw // 2, HEADER_HEIGHT // 2))
-    
+
     if logo_img:
-        screen.blit(logo_img, (20, 6)) 
+        screen.blit(logo_img, (20, 6))
         screen.blit(title_txt, title_rect)
     else:
         logo_txt = header_font.render("UNSW-RAS", True, (255, 255, 255))
         logo_y = (HEADER_HEIGHT - logo_txt.get_height()) // 2
         screen.blit(logo_txt, (20, logo_y))
-
         screen.blit(title_txt, title_rect)
-
-    # --- NEW: DRAW MAST CONTROLS ---
-    btn_w = 80
-    btn_y = 20
-    btn_h = 35
-    spacing = 10
-    
-    # Calculate starting X based on whether the ARM SIM button is present
-    offset_right = 140 if arm_node is not None else 20
-    start_x = sw - offset_right - (btn_w * 3) - (spacing * 3)
-
-    # Raise Button
-    btn_mast_raise = pygame.Rect(start_x, btn_y, btn_w, btn_h)
-    pygame.draw.rect(screen, (46, 204, 113), btn_mast_raise, border_radius=6)
-    r_txt = ui_font.render("RAISE", True, (255, 255, 255))
-    screen.blit(r_txt, r_txt.get_rect(center=btn_mast_raise.center))
-
-    # Stow Button
-    btn_mast_stow = pygame.Rect(start_x + btn_w + spacing, btn_y, btn_w, btn_h)
-    pygame.draw.rect(screen, (243, 156, 18), btn_mast_stow, border_radius=6)
-    s_txt = ui_font.render("STOW", True, (255, 255, 255))
-    screen.blit(s_txt, s_txt.get_rect(center=btn_mast_stow.center))
-
-    # Lower Button
-    btn_mast_lower = pygame.Rect(start_x + (btn_w*2) + (spacing*2), btn_y, btn_w, btn_h)
-    pygame.draw.rect(screen, (231, 76, 60), btn_mast_lower, border_radius=6)
-    l_txt = ui_font.render("LOWER", True, (255, 255, 255))
-    screen.blit(l_txt, l_txt.get_rect(center=btn_mast_lower.center))
 
     if arm_node is not None:
         btn_toggle_arm_rect = pygame.Rect(sw - 140, 20, 120, 35)
@@ -494,16 +501,18 @@ while running:
         pygame.draw.rect(screen, btn_t_color, btn_toggle_arm_rect, border_radius=6)
         tog_txt = ui_font.render("ARM SIM", True, (255, 255, 255))
         screen.blit(tog_txt, tog_txt.get_rect(center=btn_toggle_arm_rect.center))
+    else:
+        btn_toggle_arm_rect = pygame.Rect(0, 0, 0, 0)
 
     pygame.draw.rect(screen, (15, 18, 22), (0, sh - FOOTER_HEIGHT, sw, FOOTER_HEIGHT))
     pygame.draw.line(screen, (40, 45, 55), (0, sh - FOOTER_HEIGHT), (sw, sh - FOOTER_HEIGHT), 1)
-    
+
     footer_txt = footer_font.render(f"STATUS: ONLINE  |  {ROVER_NAME}", True, (120, 130, 140))
     footer_rect = footer_txt.get_rect(center=(sw // 2, sh - (FOOTER_HEIGHT // 2)))
     screen.blit(footer_txt, footer_rect)
 
     if is_dragging and drag_cam_idx is not None:
-        pygame.draw.circle(screen, (52, 152, 219, 150), mouse_pos, 15)
+        pygame.draw.circle(screen, (52, 152, 219), mouse_pos, 15)
         font_surf = ui_font.render("MOVING", True, (255, 255, 255))
         screen.blit(font_surf, (mouse_pos[0] + 20, mouse_pos[1] - 10))
 
@@ -511,13 +520,19 @@ while running:
     clock.tick(30)
 
 for cam in camera_handlers:
-
     cam.stop_event.set()
-    if cam.cap: cam.cap.release()
+    if cam.cap:
+        cam.cap.release()
 
-if arm_node is not None and ROS_AVAILABLE:
-    arm_node.destroy_node()
-    rclpy.shutdown()
+if ROS_AVAILABLE:
+    if arm_node is not None:
+        arm_node.destroy_node()
+    if emag_node is not None:
+        emag_node.destroy_node()
+    try:
+        rclpy.shutdown()
+    except Exception:
+        pass
 
 pygame.quit()
 sys.exit()

@@ -45,6 +45,18 @@ ekf_filter_node:
     # odom1_differential: false
     # odom1_relative: false
     # odom1_queue_size: 10
+    
+    odom1: /zed_right/zed_node/odom
+    odom1_config: [
+      true,  true,  false,
+      false, false, true,
+      true,  true,  false,
+      false, false, true,
+      false, false, false
+    ]
+    odom1_differential: false
+    odom1_relative: false
+    odom1_queue_size: 10
 
     # Additional camera odometry feeds (left/right)
     odom2: /zed_left/zed_node/odom
@@ -59,14 +71,3 @@ ekf_filter_node:
     odom2_relative: false
     odom2_queue_size: 10
 
-    odom3: /zed_right/zed_node/odom
-    odom3_config: [
-      true,  true,  false,
-      false, false, true,
-      true,  true,  false,
-      false, false, true,
-      false, false, false
-    ]
-    odom3_differential: false
-    odom3_relative: false
-    odom3_queue_size: 10
