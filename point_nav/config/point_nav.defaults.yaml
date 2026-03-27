@@ -13,23 +13,23 @@ point_nav:
     allow_reverse: true
 
     # --- Joy output shaping ---
-    forward_axis_scale: 0.5
-    backward_axis_scale: 0.5
+    forward_axis_scale: 0.25
+    backward_axis_scale: 0.25
     steer_axis_scale: 0.7
     status_log_period: 1.0
 
     # --- Turning behavior ---
     # Force movement first, then start steering while continuing motion.
-    min_moving_speed: 0.08
-    initial_forward_motion_time: 0.35
+    min_moving_speed: 0.0
+    initial_forward_motion_time: 0.0
 
     # --- Combined camera + wheel odometry ---
     # In normal operation, run EKF and consume /odometry/filtered.
-    use_ekf_odom: true
+    use_ekf_odom: false
     ekf_odom_topic: /odometry/filtered
 
     # Fallback mode (used only when use_ekf_odom is false)
-    use_combined_odom: true
+    use_combined_odom: false
     camera_pose_timeout: 0.5
     camera_pose_topic: /zed/zed_node/pose
     wheel_odom_topic: /wheel/odom

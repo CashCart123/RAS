@@ -1,0 +1,10 @@
+# File-based goal inputs for point_nav_old.
+# This is read by `set_goal` and optionally by the node on startup.
+
+goal_inputs:
+  - x: 1.5
+    y: 0.0
+    throttle_scale: 0.7
+  - x: 2.0
+    y: 0.8
+    throttle_scale: 0.6

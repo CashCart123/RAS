@@ -8,9 +8,7 @@ from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 
 from geometry_msgs.msg import Point, PoseStamped
-from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Joy
-from std_msgs.msg import Bool
 
 try:
     import yaml
@@ -42,7 +40,6 @@ class PointNavNode(Node):
     def __init__(self) -> None:
         super().__init__('point_nav_node')
 
-        # Navigation control
         self.declare_parameter('goal_tolerance', 0.2)
         self.declare_parameter('max_linear_speed', 0.4)
         self.declare_parameter('max_angular_speed', 0.5)
@@ -55,47 +52,22 @@ class PointNavNode(Node):
         self.declare_parameter('status_log_period', 1.0)
         self.declare_parameter('allow_reverse', True)
 
-        # Turning behavior: always keep some motion instead of rotate-in-place
-        self.declare_parameter('min_moving_speed', 0.08)
-        self.declare_parameter('initial_forward_motion_time', 0.35)
-
-        # Combined odom
-        self.declare_parameter('use_combined_odom', False)
-        self.declare_parameter('camera_pose_timeout', 0.5)
         self.declare_parameter('camera_pose_topic', '/zed/zed_node/pose')
-        self.declare_parameter('use_ekf_odom', False)
-        self.declare_parameter('ekf_odom_topic', '/odometry/filtered')
-        self.declare_parameter('wheel_odom_topic', '/wheel/odom')
-
-        # Topics for queue/override and estop
         self.declare_parameter('goal_override_topic', '/goal_point')
         self.declare_parameter('goal_add_topic', '/goal_point/add')
-        self.declare_parameter('estop_topic', '/point_nav/estop')
-
-        # Throttle controls
         self.declare_parameter('global_throttle_scale', 1.0)
-
-        # File-based goals
         self.declare_parameter('goal_file_path', '')
         self.declare_parameter('load_goals_on_startup', False)
-        self.declare_parameter('goal_file_mode', 'queue')  # queue | override
+        self.declare_parameter('goal_file_mode', 'queue')
 
-        # Internal state
         self._x = 0.0
         self._y = 0.0
         self._yaw = 0.0
         self._has_pose = False
 
-        self._wheel_vx = 0.0
-        self._wheel_stamp_ns = 0
-        self._cam_stamp_ns = 0
-        self._last_pose_update_ns = 0
-
         self._goal_queue: List[GoalItem] = []
         self._goal: Optional[GoalItem] = None
-        self._goal_start_ns = 0
         self._active = False
-        self._estop = False
 
         self._last_stop_sent = False
         self._last_status_log_ns = 0
@@ -106,36 +78,21 @@ class PointNavNode(Node):
             depth=10,
         )
 
-        camera_topic = str(self.get_parameter('camera_pose_topic').value)
-        use_ekf_odom = bool(self.get_parameter('use_ekf_odom').value)
-        ekf_odom_topic = str(self.get_parameter('ekf_odom_topic').value)
-        wheel_topic = str(self.get_parameter('wheel_odom_topic').value)
+        pose_topic = str(self.get_parameter('camera_pose_topic').value)
         override_topic = str(self.get_parameter('goal_override_topic').value)
         add_topic = str(self.get_parameter('goal_add_topic').value)
-        estop_topic = str(self.get_parameter('estop_topic').value)
 
-        self._ekf_sub = None
-        self._pose_sub = None
-        self._wheel_sub = None
-        if use_ekf_odom:
-            self._ekf_sub = self.create_subscription(Odometry, ekf_odom_topic, self._ekf_odom_cb, qos)
-        else:
-            self._pose_sub = self.create_subscription(PoseStamped, camera_topic, self._pose_cb, qos)
-            self._wheel_sub = self.create_subscription(Odometry, wheel_topic, self._wheel_odom_cb, qos)
+        self._pose_sub = self.create_subscription(PoseStamped, pose_topic, self._pose_cb, qos)
         self._goal_override_sub = self.create_subscription(Point, override_topic, self._goal_override_cb, qos)
         self._goal_add_sub = self.create_subscription(Point, add_topic, self._goal_add_cb, qos)
-        self._estop_sub = self.create_subscription(Bool, estop_topic, self._estop_cb, qos)
-
         self._joy_pub = self.create_publisher(Joy, '/joy', 10)
-
         self._timer = self.create_timer(0.05, self._on_timer)
 
         if bool(self.get_parameter('load_goals_on_startup').value):
             self._load_goals_from_file()
 
         self.get_logger().info(
-            f'PointNav ready. override={override_topic}, add={add_topic}, estop={estop_topic}, '
-            f'pose_source={"ekf" if use_ekf_odom else "camera+wheel"}'
+            f'PointNav ready. pose={pose_topic}, override={override_topic}, add={add_topic}'
         )
 
     def _pose_cb(self, msg: PoseStamped) -> None:
@@ -145,27 +102,10 @@ class PointNavNode(Node):
         self._yaw = yaw_from_quaternion(q.x, q.y, q.z, q.w)
         self._has_pose = True
 
-        now_ns = self.get_clock().now().nanoseconds
-        self._cam_stamp_ns = now_ns
-        self._last_pose_update_ns = now_ns
-
-    def _wheel_odom_cb(self, msg: Odometry) -> None:
-        self._wheel_vx = float(msg.twist.twist.linear.x)
-        self._wheel_stamp_ns = self.get_clock().now().nanoseconds
-
-    def _ekf_odom_cb(self, msg: Odometry) -> None:
-        self._x = float(msg.pose.pose.position.x)
-        self._y = float(msg.pose.pose.position.y)
-        q = msg.pose.pose.orientation
-        self._yaw = yaw_from_quaternion(q.x, q.y, q.z, q.w)
-        self._has_pose = True
-        self._last_pose_update_ns = self.get_clock().now().nanoseconds
-
     def _goal_override_cb(self, msg: Point) -> None:
         self._goal_queue.clear()
         self._goal = self._goal_from_point(msg)
         self._active = True
-        self._goal_start_ns = self.get_clock().now().nanoseconds
         self._last_stop_sent = False
         self.get_logger().info(
             f'Override goal: x={self._goal.x:.3f}, y={self._goal.y:.3f}, throttle={self._goal.throttle_scale:.2f}'
@@ -182,22 +122,9 @@ class PointNavNode(Node):
                 f'Queued goal #{len(self._goal_queue)}: x={goal.x:.3f}, y={goal.y:.3f}, throttle={goal.throttle_scale:.2f}'
             )
 
-    def _estop_cb(self, msg: Bool) -> None:
-        self._estop = bool(msg.data)
-        if self._estop:
-            self._active = False
-            self._goal = None
-            self._goal_queue.clear()
-            self._publish_stop()
-            self._last_stop_sent = True
-            self.get_logger().warn('E-stop engaged. Motion halted and queue cleared.')
-        else:
-            self.get_logger().info('E-stop released.')
-
     def _goal_from_point(self, msg: Point) -> GoalItem:
-        throttle = 1.0
-        if msg.z > 0.0:
-            throttle = float(max(0.05, min(1.0, msg.z)))
+        throttle = float(msg.z) if msg.z > 0.0 else 1.0
+        throttle = max(0.05, min(1.0, throttle))
         return GoalItem(x=float(msg.x), y=float(msg.y), throttle_scale=throttle)
 
     def _activate_next_goal(self) -> bool:
@@ -208,7 +135,6 @@ class PointNavNode(Node):
 
         self._goal = self._goal_queue.pop(0)
         self._active = True
-        self._goal_start_ns = self.get_clock().now().nanoseconds
         self._last_stop_sent = False
         self.get_logger().info(
             f'Activated queued goal: x={self._goal.x:.3f}, y={self._goal.y:.3f}, throttle={self._goal.throttle_scale:.2f}; '
@@ -216,37 +142,7 @@ class PointNavNode(Node):
         )
         return True
 
-    def _integrate_wheel_dead_reckoning(self, now_ns: int) -> None:
-        if bool(self.get_parameter('use_ekf_odom').value):
-            return
-        if not bool(self.get_parameter('use_combined_odom').value):
-            return
-        if self._last_pose_update_ns == 0:
-            self._last_pose_update_ns = now_ns
-            return
-
-        camera_timeout_ns = int(max(0.05, float(self.get_parameter('camera_pose_timeout').value)) * 1e9)
-        camera_is_stale = (now_ns - self._cam_stamp_ns) > camera_timeout_ns
-        wheel_is_fresh = (now_ns - self._wheel_stamp_ns) <= camera_timeout_ns
-
-        if camera_is_stale and wheel_is_fresh:
-            dt = max(0.0, (now_ns - self._last_pose_update_ns) * 1e-9)
-            self._x += self._wheel_vx * math.cos(self._yaw) * dt
-            self._y += self._wheel_vx * math.sin(self._yaw) * dt
-            self._has_pose = True
-
-        self._last_pose_update_ns = now_ns
-
     def _on_timer(self) -> None:
-        now_ns = self.get_clock().now().nanoseconds
-        self._integrate_wheel_dead_reckoning(now_ns)
-
-        if self._estop:
-            if not self._last_stop_sent:
-                self._publish_stop()
-                self._last_stop_sent = True
-            return
-
         if not self._has_pose:
             if not self._last_stop_sent:
                 self._publish_stop()
@@ -272,9 +168,6 @@ class PointNavNode(Node):
         allow_reverse = bool(self.get_parameter('allow_reverse').value)
         steer_scale = float(self.get_parameter('steer_axis_scale').value)
         global_throttle = float(self.get_parameter('global_throttle_scale').value)
-
-        min_moving_speed = max(0.0, float(self.get_parameter('min_moving_speed').value))
-        initial_move_time = max(0.0, float(self.get_parameter('initial_forward_motion_time').value))
 
         dx = self._goal.x - self._x
         dy = self._goal.y - self._y
@@ -305,23 +198,13 @@ class PointNavNode(Node):
             v_cmd *= slowdown
 
         v_cmd = max(-max_v, min(max_v, v_cmd))
+        w_cmd = max(-max_w, min(max_w, k_w * heading_eff))
 
-        # Improve turning behavior: small initial straight segment then turn while moving.
-        elapsed_s = max(0.0, (now_ns - self._goal_start_ns) * 1e-9)
-        if elapsed_s < initial_move_time and not use_reverse:
-            w_cmd = 0.0
-            v_cmd = max(min_moving_speed, abs(v_cmd))
-        else:
-            w_cmd = max(-max_w, min(max_w, k_w * heading_eff))
-            if abs(v_cmd) < min_moving_speed:
-                v_cmd = math.copysign(min_moving_speed, -1.0 if use_reverse else 1.0)
-
-        # Per-run and global throttle scaling
         throttle_scale = max(0.05, min(1.0, self._goal.throttle_scale * max(0.05, min(1.0, global_throttle))))
         v_cmd *= throttle_scale
 
-        status_period = float(self.get_parameter('status_log_period').value)
-        period_ns = int(max(0.1, status_period) * 1e9)
+        now_ns = self.get_clock().now().nanoseconds
+        period_ns = int(max(0.1, float(self.get_parameter('status_log_period').value)) * 1e9)
         if now_ns - self._last_status_log_ns >= period_ns:
             motion = 'forward' if v_cmd >= 0.0 else 'reverse'
             self.get_logger().info(
@@ -364,12 +247,11 @@ class PointNavNode(Node):
             self._goal_queue = goals[1:]
             self._goal = goals[0]
             self._active = True
-            self._goal_start_ns = self.get_clock().now().nanoseconds
+            self._last_stop_sent = False
             self.get_logger().info(f'Loaded {len(goals)} goal(s) from {path} in override mode.')
             return
 
-        for goal in goals:
-            self._goal_queue.append(goal)
+        self._goal_queue.extend(goals)
         if not self._active and self._goal is None:
             self._activate_next_goal()
         self.get_logger().info(f'Loaded {len(goals)} goal(s) from {path} in queue mode.')
@@ -384,8 +266,9 @@ class PointNavNode(Node):
                 pn = data.get('point_nav')
                 if isinstance(pn.get('goal_inputs'), list):
                     goal_items = pn.get('goal_inputs')
-                elif isinstance(pn.get('ros__parameters'), dict) and isinstance(pn['ros__parameters'].get('goal_inputs'), list):
-                    goal_items = pn['ros__parameters'].get('goal_inputs')
+                elif isinstance(pn.get('ros__parameters'), dict):
+                    if isinstance(pn['ros__parameters'].get('goal_inputs'), list):
+                        goal_items = pn['ros__parameters']['goal_inputs']
 
         if not isinstance(goal_items, list):
             return []
@@ -396,10 +279,8 @@ class PointNavNode(Node):
                 continue
             if 'x' not in item or 'y' not in item:
                 continue
-            throttle = float(item.get('throttle_scale', 1.0))
-            throttle = max(0.05, min(1.0, throttle))
+            throttle = max(0.05, min(1.0, float(item.get('throttle_scale', 1.0))))
             goals.append(GoalItem(x=float(item['x']), y=float(item['y']), throttle_scale=throttle))
-
         return goals
 
     def _publish_stop(self) -> None:
@@ -423,8 +304,7 @@ class PointNavNode(Node):
         steer_scale: float = 1.0,
     ) -> Joy:
         steer = 0.0 if max_w <= 0.0 else max(-1.0, min(1.0, w_cmd / max_w))
-        steer_scale = max(0.0, min(1.0, steer_scale))
-        steer *= steer_scale
+        steer *= max(0.0, min(1.0, steer_scale))
 
         forward_axis = 1.0
         backward_axis = 1.0
@@ -433,8 +313,8 @@ class PointNavNode(Node):
             scale = max(0.0, min(1.0, forward_scale))
             forward_axis = 1.0 if max_v <= 0.0 else 1.0 - 2.0 * scale * max(0.0, min(1.0, v_cmd / max_v))
         else:
-            bscale = max(0.0, min(1.0, backward_scale))
-            backward_axis = 1.0 if max_v <= 0.0 else 1.0 - 2.0 * bscale * max(0.0, min(1.0, (-v_cmd) / max_v))
+            scale = max(0.0, min(1.0, backward_scale))
+            backward_axis = 1.0 if max_v <= 0.0 else 1.0 - 2.0 * scale * max(0.0, min(1.0, (-v_cmd) / max_v))
 
         joy = Joy()
         axes = [0.0] * 6

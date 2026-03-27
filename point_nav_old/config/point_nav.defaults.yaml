@@ -1,0 +1,39 @@
+# Point-Nav old defaults (ROS 2 YAML)
+# This package keeps the camera-pose-only controller and excludes URDF, wheel odom,
+# joint-state publishing, and staged move-then-turn behavior.
+
+point_nav:
+  ros__parameters:
+    # --- Navigation core ---
+    goal_tolerance: 0.2
+    max_linear_speed: 0.4
+    max_angular_speed: 0.5
+    k_v: 0.5
+    k_w: 0.8
+    angle_slowdown_threshold: 0.3
+    allow_reverse: true
+
+    # --- Joy output shaping ---
+    forward_axis_scale: 0.5
+    backward_axis_scale: 0.5
+    steer_axis_scale: 0.7
+    status_log_period: 1.0
+
+    # --- Inputs ---
+    camera_pose_topic: /zed/zed_node/pose
+    goal_override_topic: /goal_point
+    goal_add_topic: /goal_point/add
+
+    # --- Throttle ---
+    global_throttle_scale: 1.0
+
+    # --- File-based goal input ---
+    # Launch injects the packaged goal-input YAML path by default.
+    goal_file_path: ''
+    load_goals_on_startup: false
+    goal_file_mode: queue  # queue | override
+
+cli_defaults:
+  publish_count: 3
+  publish_delay: 0.1
+  mode: override  # override | queue

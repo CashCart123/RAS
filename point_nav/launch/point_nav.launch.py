@@ -29,12 +29,12 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'enable_wheel_odom',
-            default_value='true',
+            default_value='false',
             description='Run wheel odometry node (/joint_states -> /wheel/odom).'
         ),
         DeclareLaunchArgument(
             'enable_ekf',
-            default_value='true',
+            default_value='false',
             description='Run robot_localization EKF fusion (/wheel/odom + camera odom -> /odometry/filtered).'
         ),
         DeclareLaunchArgument(

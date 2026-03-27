@@ -143,8 +143,8 @@ void subscription_callback(const void * msgin)
   byte speed_command_l[8] = {0xA2, 0x00, 0x00, 0x00, low_byte_l, high_byte_l, dir_l, dir_l};
 
   // Sending Message
-  byte sndStat_r1 = CAN0.sendMsgBuf(0x142, 0, 8, speed_command_l); // Send left wheel command
-  byte sndStat_r2 = CAN0.sendMsgBuf(0x144, 0, 8, speed_command_r); // Send right wheel command
+  byte sndStat_r1 = CAN0.sendMsgBuf(0x142, 0, 8, speed_command_r); // Send left wheel command
+  byte sndStat_r2 = CAN0.sendMsgBuf(0x144, 0, 8, speed_command_l); // Send right wheel command
   byte sndStat_l1 = CAN0.sendMsgBuf(0x143, 0, 8, speed_command_r); // Send right wheel command
   byte sndStat_l2 = CAN0.sendMsgBuf(0x141, 0, 8, speed_command_l); // Send left wheel command
 

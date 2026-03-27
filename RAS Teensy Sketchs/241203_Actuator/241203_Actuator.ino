@@ -84,7 +84,7 @@ void subscription_callback(const void * msgin)
   {
     move_actuators_base(0);
   }
-  else if(b_pressed == 1)
+  else if(y_pressed == 1)
   {
     move_actuators_base(1);
   }
@@ -98,7 +98,7 @@ void subscription_callback(const void * msgin)
   {
     move_actuator_top(0);
   }
-  else if(y_pressed == 1)
+  else if(b_pressed == 1)
   {
     move_actuator_top(1);
   }
